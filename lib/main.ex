@@ -6,8 +6,8 @@ defmodule CLI do
               IO.puts(:stderr, "Logs from your program will appear here!")
 
               # TODO: Uncomment the code below to pass the first stage
-              # decoded_str = Bencode.decode(encoded_str)
-              # IO.puts(Jason.encode!(decoded_str))
+              decoded_str = Bencode.decode(encoded_str)
+              IO.puts(Jason.encode!(decoded_str))
           [command | _] ->
               IO.puts("Unknown command: #{command}")
               System.halt(1)
