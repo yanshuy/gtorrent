@@ -1,42 +1,41 @@
 -module(bittorrent).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/bittorrent.gleam").
--export([execute/1, main/0]).
+-export([stop/1, execute/1, main/0]).
+
+-file("src/bittorrent.gleam", 32).
+-spec stop(integer()) -> nil.
+stop(Code) ->
+    init:stop(Code).
 
 -file("src/bittorrent.gleam", 11).
 -spec execute(list(binary())) -> nil.
 execute(Args) ->
     case Args of
         [<<"decode"/utf8>>, Encode_str | _] ->
-            Decoded_str = begin
+            Res = begin
                 _pipe = gleam_stdlib:identity(Encode_str),
                 bencode:decode(_pipe)
             end,
-            Json_string = begin
-                _pipe@1 = gleam@json:string(Decoded_str),
-                gleam@json:to_string(_pipe@1)
-            end,
-            gleam_stdlib:println(Json_string);
+            case Res of
+                {ok, Value} ->
+                    _pipe@1 = bencode:to_json(Value),
+                    _pipe@2 = gleam@json:to_string(_pipe@1),
+                    gleam_stdlib:println(_pipe@2);
+
+                {error, Err} ->
+                    gleam_stdlib:println_error(bencode:stringify_error(Err))
+            end;
 
         [Command | _] ->
             gleam_stdlib:println(<<"Unknown command: "/utf8, Command/binary>>),
-            erlang:error(#{gleam_error => panic,
-                    message => <<"`panic` expression evaluated."/utf8>>,
-                    file => <<?FILEPATH/utf8>>,
-                    module => <<"bittorrent"/utf8>>,
-                    function => <<"execute"/utf8>>,
-                    line => 22});
+            init:stop(1);
 
         [] ->
             gleam_stdlib:println(
                 <<"Usage: your_program.sh <command> <args>"/utf8>>
             ),
-            erlang:error(#{gleam_error => panic,
-                    message => <<"`panic` expression evaluated."/utf8>>,
-                    file => <<?FILEPATH/utf8>>,
-                    module => <<"bittorrent"/utf8>>,
-                    function => <<"execute"/utf8>>,
-                    line => 26})
+            init:stop(1)
     end.
 
 -file("src/bittorrent.gleam", 7).

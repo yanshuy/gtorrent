@@ -11,19 +11,22 @@ pub fn main() {
 pub fn execute(args: List(String)) {
   case args {
     ["decode", encode_str, ..] -> {
-      let decoded_str = bit_array.from_string(encode_str) |> bencode.decode
-
-      let json_string = json.string(decoded_str) |> json.to_string
-
-      io.println(json_string)
+      let res = bit_array.from_string(encode_str) |> bencode.decode
+      case res {
+        Ok(value) -> bencode.to_json(value) |> json.to_string |> io.println
+        Error(err) -> io.println_error(bencode.stringify_error(err))
+      }
     }
     [command, ..] -> {
       io.println("Unknown command: " <> command)
-      panic
+      stop(1)
     }
     [] -> {
       io.println("Usage: your_program.sh <command> <args>")
-      panic
+      stop(1)
     }
   }
 }
+
+@external(erlang, "init", "stop")
+pub fn stop(code: Int) -> Nil
