@@ -5,10 +5,7 @@
                     gleam_stdlib,
                     gleeunit]},
     {description, ""},
-    {modules, [app_gleam@@main,
-               app_gleam_test,
-               bencode,
-               bittorrent,
-               helpers]},
+    {modules, [bencode,
+               bittorrent]},
     {registered, []}
 ]}.
