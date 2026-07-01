@@ -3,6 +3,7 @@ import gleam/bit_array
 import gleam/dict
 import gleam/int
 import gleam/io
+import gleam/list
 import gleam/result.{try}
 import gleam/string
 
@@ -11,16 +12,26 @@ pub fn print_info(meta_info: bencode.Bencode) -> Result(Nil, TorrentError) {
     bencode.BDict(entries) -> {
       let dict = dict.from_list(entries)
       use tracker <- try(get_string(dict, "announce"))
+      io.println("Tracker URL: " <> tracker)
+
       use info_entries <- try(get_entries(dict, "info"))
       let info_dict = dict.from_list(info_entries)
+
       use length <- try(get_int(info_dict, "length"))
+      io.println("Length: " <> int.to_string(length))
 
       let encoded =
         digest(info_entries) |> bit_array.base16_encode |> string.lowercase
-
-      io.println("Tracker URL: " <> tracker)
-      io.println("Length: " <> int.to_string(length))
       io.println("Info Hash: " <> encoded)
+
+      use piece_length <- try(get_int(info_dict, "piece length"))
+      io.println("Piece Length: " <> int.to_string(piece_length))
+
+      use pieces <- try(get_value(info_dict, "pieces"))
+      let assert bencode.BString(bits) = pieces
+      let hashes = encode_piece_hashes(bits, []) |> string.join(with: "\n")
+      io.println("Piece Hashes: \n" <> hashes)
+
       Ok(Nil)
     }
     _ -> Error(InvalidTorrent("Not a valid torrent"))
@@ -30,6 +41,19 @@ pub fn print_info(meta_info: bencode.Bencode) -> Result(Nil, TorrentError) {
 fn digest(info_entries: List(#(String, bencode.Bencode))) {
   let bits = bencode.BDict(info_entries) |> bencode.encode
   hash(Sha, bits)
+}
+
+fn encode_piece_hashes(bits: BitArray, acc: List(String)) -> List(String) {
+  case bits {
+    <<>> -> list.reverse(acc)
+
+    <<first:bytes-size(20), rest:bits>> -> {
+      let encoded = bit_array.base16_encode(first) |> string.lowercase
+      encode_piece_hashes(rest, [encoded, ..acc])
+    }
+
+    _ -> acc
+  }
 }
 
 pub type TorrentError {
