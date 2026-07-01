@@ -6,8 +6,7 @@
                     gleeunit,
                     simplifile]},
     {description, ""},
-    {modules, [bencode,
-               bittorrent,
+    {modules, [bittorrent,
                torrent]},
     {registered, []}
 ]}.

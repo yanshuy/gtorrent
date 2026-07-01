@@ -1,7 +1,7 @@
 -module(bencode).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/bencode.gleam").
--export([decode/1, to_json/1, stringify_error/1]).
+-export([decode/1, encode/1, to_json/1, stringify_error/1]).
 -export_type([bencode/0, decode_error/0]).
 
 -type bencode() :: {b_dict, list({binary(), bencode()})} |
@@ -14,14 +14,13 @@
     invalid_string_length |
     invalid_dictionary_key |
     invalid_utf8 |
-    {invalid_prefix, integer()} |
-    no_colon.
+    no_colon |
+    {invalid_prefix, integer()}.
 
 -file("src/bencode.gleam", 45).
 -spec decode_string(bitstring()) -> {ok, {bencode(), bitstring()}} |
     {error, decode_error()}.
 decode_string(Bits) ->
-    echo(gleam@bit_array:to_string(Bits), nil, 46),
     gleam@result:'try'(
         begin
             _pipe = helpers:take_until(Bits, <<":"/utf8>>),
@@ -37,12 +36,12 @@ decode_string(Bits) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"bencode"/utf8>>,
                                 function => <<"decode_string"/utf8>>,
-                                line => 51,
+                                line => 50,
                                 value => _assert_fail,
-                                start => 1170,
-                                'end' => 1220,
-                                pattern_start => 1181,
-                                pattern_end => 1192})
+                                start => 1137,
+                                'end' => 1187,
+                                pattern_start => 1148,
+                                pattern_end => 1159})
             end,
             gleam@result:'try'(
                 begin
@@ -84,7 +83,7 @@ decode_string(Bits) ->
         end
     ).
 
--file("src/bencode.gleam", 70).
+-file("src/bencode.gleam", 69).
 -spec decode_integer(bitstring()) -> {ok, {bencode(), bitstring()}} |
     {error, decode_error()}.
 decode_integer(Bits) ->
@@ -103,12 +102,12 @@ decode_integer(Bits) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"bencode"/utf8>>,
                                 function => <<"decode_integer"/utf8>>,
-                                line => 76,
+                                line => 75,
                                 value => _assert_fail,
-                                start => 1830,
-                                'end' => 1876,
-                                pattern_start => 1841,
-                                pattern_end => 1848})
+                                start => 1797,
+                                'end' => 1843,
+                                pattern_start => 1808,
+                                pattern_end => 1815})
             end,
             gleam@result:'try'(
                 begin
@@ -120,7 +119,7 @@ decode_integer(Bits) ->
         end
     ).
 
--file("src/bencode.gleam", 99).
+-file("src/bencode.gleam", 98).
 -spec decode_dictionary(bitstring(), list({binary(), bencode()})) -> {ok,
         {bencode(), bitstring()}} |
     {error, decode_error()}.
@@ -146,12 +145,12 @@ decode_dictionary(Bits, Entries) ->
                                         file => <<?FILEPATH/utf8>>,
                                         module => <<"bencode"/utf8>>,
                                         function => <<"decode_dictionary"/utf8>>,
-                                        line => 113,
+                                        line => 112,
                                         value => _assert_fail,
-                                        start => 2726,
-                                        'end' => 2763,
-                                        pattern_start => 2737,
-                                        pattern_end => 2754})
+                                        start => 2693,
+                                        'end' => 2730,
+                                        pattern_start => 2704,
+                                        pattern_end => 2721})
                     end,
                     Key@1 = case gleam@bit_array:to_string(Key_bits@1) of
                         {ok, Key} -> Key;
@@ -161,12 +160,12 @@ decode_dictionary(Bits, Entries) ->
                                         file => <<?FILEPATH/utf8>>,
                                         module => <<"bencode"/utf8>>,
                                         function => <<"decode_dictionary"/utf8>>,
-                                        line => 114,
+                                        line => 113,
                                         value => _assert_fail@1,
-                                        start => 2770,
-                                        'end' => 2820,
-                                        pattern_start => 2781,
-                                        pattern_end => 2788})
+                                        start => 2737,
+                                        'end' => 2787,
+                                        pattern_start => 2748,
+                                        pattern_end => 2755})
                     end,
                     gleam@result:'try'(
                         decode_loop(Rest@1),
@@ -182,7 +181,7 @@ decode_dictionary(Bits, Entries) ->
             )
     end.
 
--file("src/bencode.gleam", 83).
+-file("src/bencode.gleam", 82).
 -spec decode_list(bitstring(), list(bencode())) -> {ok,
         {bencode(), bitstring()}} |
     {error, decode_error()}.
@@ -240,7 +239,57 @@ decode(Encoded_value) ->
         end
     ).
 
--file("src/bencode.gleam", 123).
+-file("src/bencode.gleam", 156).
+-spec encode_entries(list({binary(), bencode()}), list(bitstring())) -> bitstring().
+encode_entries(Entries, Acc) ->
+    case Entries of
+        [] ->
+            _pipe = lists:reverse(Acc),
+            gleam_stdlib:bit_array_concat(_pipe);
+
+        [{Key, Value} | Rest] ->
+            Key@1 = encode({b_string, gleam_stdlib:identity(Key)}),
+            Value@1 = encode(Value),
+            encode_entries(Rest, [<<Key@1/bitstring, Value@1/bitstring>> | Acc])
+    end.
+
+-file("src/bencode.gleam", 143).
+-spec encode_list(list(bencode()), list(bitstring())) -> bitstring().
+encode_list(Values, Acc) ->
+    case Values of
+        [] ->
+            _pipe = lists:reverse(Acc),
+            gleam_stdlib:bit_array_concat(_pipe);
+
+        [Head | Rest] ->
+            First = encode(Head),
+            encode_list(Rest, [First | Acc])
+    end.
+
+-file("src/bencode.gleam", 122).
+-spec encode(bencode()) -> bitstring().
+encode(Value) ->
+    case Value of
+        {b_integer, Integer} ->
+            <<"i"/utf8, (erlang:integer_to_binary(Integer))/binary, "e"/utf8>>;
+
+        {b_string, Bits} ->
+            Length = begin
+                _pipe = erlang:byte_size(Bits),
+                erlang:integer_to_binary(_pipe)
+            end,
+            <<Length/binary, ":"/utf8, Bits/bitstring>>;
+
+        {b_list, Values} ->
+            List = encode_list(Values, []),
+            <<"l"/utf8, List/bitstring, "e"/utf8>>;
+
+        {b_dict, Entries} ->
+            Entries@1 = encode_entries(Entries, []),
+            <<"d"/utf8, Entries@1/bitstring, "e"/utf8>>
+    end.
+
+-file("src/bencode.gleam", 173).
 -spec to_json(bencode()) -> gleam@json:json().
 to_json(Value) ->
     case Value of
@@ -267,12 +316,12 @@ to_json(Value) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"bencode"/utf8>>,
                                 function => <<"to_json"/utf8>>,
-                                line => 129,
+                                line => 179,
                                 value => _assert_fail,
-                                start => 3183,
-                                'end' => 3232,
-                                pattern_start => 3194,
-                                pattern_end => 3204})
+                                start => 4292,
+                                'end' => 4341,
+                                pattern_start => 4303,
+                                pattern_end => 4313})
             end,
             gleam@json:string(String@1);
 
@@ -280,7 +329,7 @@ to_json(Value) ->
             gleam@json:int(Integer)
     end.
 
--file("src/bencode.gleam", 136).
+-file("src/bencode.gleam", 186).
 -spec stringify_error(decode_error()) -> binary().
 stringify_error(Error) ->
     case Error of
@@ -305,215 +354,3 @@ stringify_error(Error) ->
         invalid_dictionary_key ->
             <<"Invalid dict key"/utf8>>
     end.
-
--define(is_lowercase_char(X),
-    (X > 96 andalso X < 123)).
-
--define(is_underscore_char(X),
-    (X == 95)).
-
--define(is_digit_char(X),
-    (X > 47 andalso X < 58)).
-
--define(is_ascii_character(X),
-    (erlang:is_integer(X) andalso X >= 32 andalso X =< 126)).
-
--define(could_be_record(Tuple),
-    erlang:is_tuple(Tuple) andalso
-        erlang:is_atom(erlang:element(1, Tuple)) andalso
-        erlang:element(1, Tuple) =/= false andalso
-        erlang:element(1, Tuple) =/= true andalso
-        erlang:element(1, Tuple) =/= nil
-).
--define(is_atom_char(C),
-    (?is_lowercase_char(C) orelse
-        ?is_underscore_char(C) orelse
-        ?is_digit_char(C))
-).
-
--define(grey, "\e[90m").
--define(reset_color, "\e[39m").
-
-echo(Value, Message, Line) ->
-    StringLine = erlang:integer_to_list(Line),
-    StringValue = echo@inspect(Value),
-    StringMessage =
-        case Message of
-            nil -> "";
-            M -> [" ", M]
-        end,
-
-    io:put_chars(
-      standard_error,
-      [
-        ?grey, ?FILEPATH, $:, StringLine, ?reset_color, StringMessage, $\n,
-        StringValue, $\n
-      ]
-    ),
-    Value.
-
-echo@inspect(Value) ->
-    case Value of
-        nil -> "Nil";
-        true -> "True";
-        false -> "False";
-        Int when erlang:is_integer(Int) -> erlang:integer_to_list(Int);
-        Float when erlang:is_float(Float) -> io_lib_format:fwrite_g(Float);
-        Binary when erlang:is_binary(Binary) -> inspect@binary(Binary);
-        Bits when erlang:is_bitstring(Bits) -> inspect@bit_array(Bits);
-        Atom when erlang:is_atom(Atom) -> inspect@atom(Atom);
-        List when erlang:is_list(List) -> inspect@list(List);
-        Map when erlang:is_map(Map) -> inspect@map(Map);
-        Record when ?could_be_record(Record) -> inspect@record(Record);
-        Tuple when erlang:is_tuple(Tuple) -> inspect@tuple(Tuple);
-        Function when erlang:is_function(Function) -> inspect@function(Function);
-        Any -> ["//erl(", io_lib:format("~p", [Any]), ")"]
-    end.
-
-inspect@bit_array(Bits) ->
-    Pieces = inspect@bit_array_pieces(Bits, []),
-    Inner = lists:join(", ", lists:reverse(Pieces)),
-    ["<<", Inner, ">>"].
-
-inspect@bit_array_pieces(Bits, Acc) ->
-    case Bits of
-        <<>> ->
-            Acc;
-        <<Byte, Rest/bitstring>> ->
-            inspect@bit_array_pieces(Rest, [erlang:integer_to_binary(Byte) | Acc]);
-        _ ->
-            Size = erlang:bit_size(Bits),
-            <<RemainingBits:Size>> = Bits,
-            SizeString = [":size(", erlang:integer_to_binary(Size), ")"],
-            Piece = [erlang:integer_to_binary(RemainingBits), SizeString],
-            [Piece | Acc]
-    end.
-
-inspect@binary(Binary) ->
-    case inspect@maybe_utf8_string(Binary, <<>>) of
-        {ok, InspectedUtf8String} ->
-            InspectedUtf8String;
-        {error, not_a_utf8_string} ->
-            Segments = [erlang:integer_to_list(X) || <<X>> <= Binary],
-            ["<<", lists:join(", ", Segments), ">>"]
-    end.
-
-inspect@atom(Atom) ->
-    Binary = erlang:atom_to_binary(Atom),
-    case inspect@maybe_gleam_atom(Binary, none, <<>>) of
-        {ok, Inspected} -> Inspected;
-        {error, _} -> ["atom.create(\"", Binary, "\")"]
-    end.
-
-inspect@list(List) ->
-    case inspect@list_loop(List, true) of
-        {charlist, _} -> ["charlist.from_string(\"", erlang:list_to_binary(List), "\")"];
-        {proper, Elements} -> ["[", Elements, "]"];
-        {improper, Elements} -> ["//erl([", Elements, "])"]
-    end.
-
-inspect@map(Map) ->
-    Fields = [
-        [<<"#(">>, echo@inspect(Key), <<", ">>, echo@inspect(Value), <<")">>]
-        || {Key, Value} <- maps:to_list(Map)
-    ],
-    ["dict.from_list([", lists:join(", ", Fields), "])"].
-
-inspect@record(Record) ->
-    [Atom | ArgsList] = Tuple = erlang:tuple_to_list(Record),
-    case inspect@maybe_gleam_atom(Atom, none, <<>>) of
-        {ok, Tag} ->
-            Args = lists:join(", ", lists:map(fun echo@inspect/1, ArgsList)),
-            [Tag, "(", Args, ")"];
-        _ ->
-            inspect@tuple(Tuple)
-    end.
-
-inspect@tuple(Tuple) when erlang:is_tuple(Tuple) ->
-    inspect@tuple(erlang:tuple_to_list(Tuple));
-inspect@tuple(Tuple) ->
-    Elements = lists:map(fun echo@inspect/1, Tuple),
-    ["#(", lists:join(", ", Elements), ")"].
-
-inspect@function(Function) ->
-    {arity, Arity} = erlang:fun_info(Function, arity),
-    ArgsAsciiCodes = lists:seq($a, $a + Arity - 1),
-    Args = lists:join(", ", lists:map(fun(Arg) -> <<Arg>> end, ArgsAsciiCodes)),
-    ["//fn(", Args, ") { ... }"].
-
-inspect@maybe_utf8_string(Binary, Acc) ->
-    case Binary of
-        <<>> ->
-            {ok, <<$", Acc/binary, $">>};
-        <<First/utf8, Rest/binary>> ->
-            Escaped = inspect@escape_grapheme(First),
-            inspect@maybe_utf8_string(Rest, <<Acc/binary, Escaped/binary>>);
-        _ ->
-            {error, not_a_utf8_string}
-    end.
-
-inspect@escape_grapheme(Char) ->
-    case Char of
-        $" -> <<$\\, $">>;
-        $\\ -> <<$\\, $\\>>;
-        $\r -> <<$\\, $r>>;
-        $\n -> <<$\\, $n>>;
-        $\t -> <<$\\, $t>>;
-        $\f -> <<$\\, $f>>;
-        X when X > 126, X < 160 -> inspect@convert_to_u(X);
-        X when X < 32 -> inspect@convert_to_u(X);
-        Other -> <<Other/utf8>>
-    end.
-
-inspect@convert_to_u(Code) ->
-    erlang:list_to_binary(io_lib:format("\\u{~4.16.0B}", [Code])).
-
-inspect@list_loop(List, Ascii) ->
-    case List of
-        [] ->
-            {proper, []};
-        [First] when Ascii andalso ?is_ascii_character(First) ->
-            {charlist, nil};
-        [First] ->
-            {proper, [echo@inspect(First)]};
-        [First | Rest] when erlang:is_list(Rest) ->
-            StillAscii = Ascii andalso ?is_ascii_character(First),
-            {Kind, Inspected} = inspect@list_loop(Rest, StillAscii),
-            {Kind, [echo@inspect(First), ", " | Inspected]};
-        [First | ImproperRest] ->
-            {improper, [echo@inspect(First), " | ", echo@inspect(ImproperRest)]}
-    end.
-
-inspect@maybe_gleam_atom(Atom, PrevChar, Acc) when erlang:is_atom(Atom) ->
-    Binary = erlang:atom_to_binary(Atom),
-    inspect@maybe_gleam_atom(Binary, PrevChar, Acc);
-inspect@maybe_gleam_atom(Atom, PrevChar, Acc) ->
-    case {Atom, PrevChar} of
-        {<<>>, none} ->
-            {error, nil};
-        {<<First, _/binary>>, none} when ?is_digit_char(First) ->
-            {error, nil};
-        {<<"_", _/binary>>, none} ->
-            {error, nil};
-        {<<"_">>, _} ->
-            {error, nil};
-        {<<"_", _/binary>>, $_} ->
-            {error, nil};
-        {<<First, _/binary>>, _} when not ?is_atom_char(First) ->
-            {error, nil};
-        {<<First, Rest/binary>>, none} ->
-            inspect@maybe_gleam_atom(Rest, First, <<Acc/binary, (inspect@uppercase(First))>>);
-        {<<"_", Rest/binary>>, _} ->
-            inspect@maybe_gleam_atom(Rest, $_, Acc);
-        {<<First, Rest/binary>>, $_} ->
-            inspect@maybe_gleam_atom(Rest, First, <<Acc/binary, (inspect@uppercase(First))>>);
-        {<<First, Rest/binary>>, _} ->
-            inspect@maybe_gleam_atom(Rest, First, <<Acc/binary, First>>);
-        {<<>>, _} ->
-            {ok, Acc};
-        _ ->
-            erlang:throw({gleam_error, echo, Atom, PrevChar, Acc})
-    end.
-
-inspect@uppercase(X) -> X - 32.
-

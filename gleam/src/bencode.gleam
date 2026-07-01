@@ -119,6 +119,57 @@ fn decode_dictionary(
   }
 }
 
+pub fn encode(value: Bencode) -> BitArray {
+  case value {
+    BInteger(integer) -> <<"i":utf8, int.to_string(integer):utf8, "e":utf8>>
+
+    BString(bits) -> {
+      let length = bit_array.byte_size(bits) |> int.to_string
+      <<length:utf8, ":":utf8, bits:bits>>
+    }
+
+    BList(values) -> {
+      let list = encode_list(values, [])
+      <<"l":utf8, list:bits, "e":utf8>>
+    }
+
+    BDict(entries) -> {
+      let entries = encode_entries(entries, [])
+      <<"d":utf8, entries:bits, "e":utf8>>
+    }
+  }
+}
+
+fn encode_list(values: List(Bencode), acc: List(BitArray)) -> BitArray {
+  case values {
+    [] ->
+      list.reverse(acc)
+      |> bit_array.concat
+
+    [head, ..rest] -> {
+      let first = encode(head)
+      encode_list(rest, [first, ..acc])
+    }
+  }
+}
+
+fn encode_entries(
+  entries: List(#(String, Bencode)),
+  acc: List(BitArray),
+) -> BitArray {
+  case entries {
+    [] ->
+      list.reverse(acc)
+      |> bit_array.concat
+
+    [#(key, value), ..rest] -> {
+      let key = encode(BString(bit_array.from_string(key)))
+      let value = encode(value)
+      encode_entries(rest, [<<key:bits, value:bits>>, ..acc])
+    }
+  }
+}
+
 pub fn to_json(value: Bencode) -> json.Json {
   case value {
     BDict(entries) ->

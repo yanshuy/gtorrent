@@ -4,31 +4,36 @@ import gleam/dict
 import gleam/int
 import gleam/io
 import gleam/result.{try}
+import gleam/string
 
 pub fn print_info(meta_info: bencode.Bencode) -> Result(Nil, TorrentError) {
   case meta_info {
     bencode.BDict(entries) -> {
       let dict = dict.from_list(entries)
       use tracker <- try(get_string(dict, "announce"))
-      use info <- try(get_dict(dict, "info"))
-      use length <- try(get_int(info, "length"))
+      use info_entries <- try(get_entries(dict, "info"))
+      let info_dict = dict.from_list(info_entries)
+      use length <- try(get_int(info_dict, "length"))
+
+      let encoded =
+        digest(info_entries) |> bit_array.base16_encode |> string.lowercase
 
       io.println("Tracker URL: " <> tracker)
       io.println("Length: " <> int.to_string(length))
+      io.println("Info Hash: " <> encoded)
       Ok(Nil)
     }
     _ -> Error(InvalidTorrent("Not a valid torrent"))
   }
 }
 
-pub type TorrentError {
-  InvalidTorrent(String)
+fn digest(info_entries: List(#(String, bencode.Bencode))) {
+  let bits = bencode.BDict(info_entries) |> bencode.encode
+  hash(Sha, bits)
 }
 
-pub fn describe_error(error: TorrentError) -> String {
-  case error {
-    InvalidTorrent(message) -> message
-  }
+pub type TorrentError {
+  InvalidTorrent(String)
 }
 
 fn get_value(
@@ -67,14 +72,27 @@ fn get_int(
   }
 }
 
-fn get_dict(
+fn get_entries(
   torrent: dict.Dict(String, bencode.Bencode),
   key: String,
-) -> Result(dict.Dict(String, bencode.Bencode), TorrentError) {
+) -> Result(List(#(String, bencode.Bencode)), TorrentError) {
   use value <- try(get_value(torrent, key))
 
   case value {
-    bencode.BDict(entries) -> Ok(dict.from_list(entries))
+    bencode.BDict(entries) -> Ok(entries)
     _ -> Error(InvalidTorrent("Expected dictionary for key: " <> key))
   }
+}
+
+pub fn describe_error(error: TorrentError) -> String {
+  case error {
+    InvalidTorrent(message) -> message
+  }
+}
+
+@external(erlang, "crypto", "hash")
+fn hash(algorithm: Algorithm, data: BitArray) -> BitArray
+
+type Algorithm {
+  Sha
 }
