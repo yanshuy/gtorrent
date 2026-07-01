@@ -3,9 +3,11 @@
     {applications, [argv,
                     gleam_json,
                     gleam_stdlib,
-                    gleeunit]},
+                    gleeunit,
+                    simplifile]},
     {description, ""},
     {modules, [bencode,
-               bittorrent]},
+               bittorrent,
+               torrent]},
     {registered, []}
 ]}.

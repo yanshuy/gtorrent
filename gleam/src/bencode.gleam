@@ -8,7 +8,7 @@ import helpers
 pub type Bencode {
   BDict(List(#(String, Bencode)))
   BList(List(Bencode))
-  BString(String)
+  BString(BitArray)
   BInteger(Int)
 }
 
@@ -18,8 +18,8 @@ pub type DecodeError {
   InvalidStringLength
   InvalidDictionaryKey
   InvalidUtf8
-  InvalidPrefix(Int)
   NoColon
+  InvalidPrefix(Int)
 }
 
 pub fn decode(encoded_value: BitArray) -> Result(Bencode, DecodeError) {
@@ -57,15 +57,13 @@ fn decode_string(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
     |> result.replace_error(UnexpectedEof),
   )
 
-  let assert Ok(string) = bit_array.to_string(string_bits)
-
   let end = bit_array.byte_size(rest) - str_length
   use rem <- try(
     bit_array.slice(rest, str_length, end)
     |> result.replace_error(UnexpectedEof),
   )
 
-  Ok(#(BString(string), rem))
+  Ok(#(BString(string_bits), rem))
 }
 
 fn decode_integer(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
@@ -111,7 +109,8 @@ fn decode_dictionary(
       use #(string, rest) <- try(
         decode_string(bits) |> result.replace_error(InvalidDictionaryKey),
       )
-      let assert BString(key) = string
+      let assert BString(key_bits) = string
+      let assert Ok(key) = bit_array.to_string(key_bits)
 
       use #(value, rest) <- try(decode_loop(rest))
 
@@ -125,7 +124,10 @@ pub fn to_json(value: Bencode) -> json.Json {
     BDict(entries) ->
       json.object(list.map(entries, fn(entry) { #(entry.0, to_json(entry.1)) }))
     BList(list) -> json.array(list, to_json)
-    BString(string) -> json.string(string)
+    BString(bits) -> {
+      let assert Ok(string) = bit_array.to_string(bits)
+      json.string(string)
+    }
     BInteger(integer) -> json.int(integer)
   }
 }

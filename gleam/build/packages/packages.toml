@@ -1,5 +1,7 @@
 [packages]
-argv = "1.1.0"
-gleeunit = "1.11.0"
-gleam_stdlib = "1.0.3"
+filepath = "1.1.2"
 gleam_json = "3.1.0"
+gleam_stdlib = "1.0.3"
+gleeunit = "1.11.0"
+argv = "1.1.0"
+simplifile = "2.5.0"
