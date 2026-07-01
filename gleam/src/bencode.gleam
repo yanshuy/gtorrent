@@ -44,18 +44,24 @@ fn decode_string(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
     |> result.replace_error(NoColon),
   )
   let assert Ok(num_str) = bit_array.to_string(bits)
-
   use str_length <- try(
     int.parse(num_str) |> result.replace_error(InvalidStringLength),
   )
 
   use string_bits <- try(
-    bit_array.slice(rest, 0, str_length) |> result.replace_error(UnexpectedEof),
+    bit_array.slice(rest, 0, str_length)
+    |> result.replace_error(UnexpectedEof),
   )
 
   let assert Ok(string) = bit_array.to_string(string_bits)
 
-  Ok(#(BString(string), rest))
+  let end = bit_array.byte_size(rest) - str_length
+  use rem <- try(
+    bit_array.slice(rest, str_length, end)
+    |> result.replace_error(UnexpectedEof),
+  )
+
+  Ok(#(BString(string), rem))
 }
 
 fn decode_integer(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
