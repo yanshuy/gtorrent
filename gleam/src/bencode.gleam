@@ -1,4 +1,6 @@
 import gleam/bit_array
+import gleam/dict
+import gleam/function
 import gleam/int
 import gleam/json
 import gleam/list
@@ -6,6 +8,7 @@ import gleam/result.{try}
 import helpers
 
 pub type Bencode {
+  BDict(dict.Dict(String, Bencode))
   BList(List(Bencode))
   BString(String)
   BInteger(Int)
@@ -15,6 +18,7 @@ pub type DecodeError {
   UnexpectedEof
   InvalidInteger
   InvalidStringLength
+  InvalidDictionaryKey
   InvalidUtf8
   InvalidPrefix(Int)
   NoColon
@@ -30,6 +34,8 @@ fn decode_loop(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
     <<"i":utf8, rest:bits>> -> decode_integer(rest)
 
     <<"l":utf8, rest:bits>> -> decode_list(rest, [])
+
+    <<"d":utf8, rest:bits>> -> decode_dictionary(rest, dict.new())
 
     <<byte, _:bits>> if byte >= 48 && byte <= 57 -> decode_string(bits)
 
@@ -93,8 +99,32 @@ fn decode_list(
   }
 }
 
+fn decode_dictionary(
+  bits: BitArray,
+  dict: dict.Dict(String, Bencode),
+) -> Result(#(Bencode, BitArray), DecodeError) {
+  case bits {
+    <<"e":utf8, rest:bits>> -> {
+      let dict = BDict(dict)
+      Ok(#(dict, rest))
+    }
+
+    _ -> {
+      use #(string, rest) <- try(
+        decode_string(bits) |> result.replace_error(InvalidDictionaryKey),
+      )
+      let assert BString(key) = string
+
+      use #(value, rest) <- try(decode_string(rest))
+
+      decode_dictionary(rest, dict.insert(dict, key, value))
+    }
+  }
+}
+
 pub fn to_json(value: Bencode) -> json.Json {
   case value {
+    BDict(dict) -> json.dict(dict, function.identity, to_json)
     BList(list) -> json.array(list, to_json)
     BString(string) -> json.string(string)
     BInteger(integer) -> json.int(integer)
@@ -109,5 +139,6 @@ pub fn stringify_error(error: DecodeError) -> String {
     InvalidUtf8 -> "Invalid UTF-8"
     InvalidPrefix(byte) -> "Invalid prefix: " <> int.to_string(byte)
     NoColon -> "The ':' character is not found in the binary"
+    InvalidDictionaryKey -> "Invalid dict key"
   }
 }
