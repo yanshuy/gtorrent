@@ -103,6 +103,7 @@ fn decode_dictionary(
   bits: BitArray,
   dict: dict.Dict(String, Bencode),
 ) -> Result(#(Bencode, BitArray), DecodeError) {
+  echo bit_array.to_string(bits)
   case bits {
     <<"e":utf8, rest:bits>> -> {
       let dict = BDict(dict)
