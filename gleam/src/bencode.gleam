@@ -1,6 +1,4 @@
 import gleam/bit_array
-import gleam/dict
-import gleam/function
 import gleam/int
 import gleam/json
 import gleam/list
@@ -8,7 +6,7 @@ import gleam/result.{try}
 import helpers
 
 pub type Bencode {
-  BDict(dict.Dict(String, Bencode))
+  BDict(List(#(String, Bencode)))
   BList(List(Bencode))
   BString(String)
   BInteger(Int)
@@ -35,7 +33,7 @@ fn decode_loop(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
 
     <<"l":utf8, rest:bits>> -> decode_list(rest, [])
 
-    <<"d":utf8, rest:bits>> -> decode_dictionary(rest, dict.new())
+    <<"d":utf8, rest:bits>> -> decode_dictionary(rest, [])
 
     <<byte, _:bits>> if byte >= 48 && byte <= 57 -> decode_string(bits)
 
@@ -101,13 +99,12 @@ fn decode_list(
 
 fn decode_dictionary(
   bits: BitArray,
-  dict: dict.Dict(String, Bencode),
+  entries: List(#(String, Bencode)),
 ) -> Result(#(Bencode, BitArray), DecodeError) {
-  echo bit_array.to_string(bits)
   case bits {
     <<"e":utf8, rest:bits>> -> {
-      let dict = BDict(dict)
-      Ok(#(dict, rest))
+      let bdict = BDict(list.reverse(entries))
+      Ok(#(bdict, rest))
     }
 
     _ -> {
@@ -116,16 +113,17 @@ fn decode_dictionary(
       )
       let assert BString(key) = string
 
-      use #(value, rest) <- try(decode_string(rest))
+      use #(value, rest) <- try(decode_loop(rest))
 
-      decode_dictionary(rest, dict.insert(dict, key, value))
+      decode_dictionary(rest, [#(key, value), ..entries])
     }
   }
 }
 
 pub fn to_json(value: Bencode) -> json.Json {
   case value {
-    BDict(dict) -> json.dict(dict, function.identity, to_json)
+    BDict(entries) ->
+      json.object(list.map(entries, fn(entry) { #(entry.0, to_json(entry.1)) }))
     BList(list) -> json.array(list, to_json)
     BString(string) -> json.string(string)
     BInteger(integer) -> json.int(integer)
