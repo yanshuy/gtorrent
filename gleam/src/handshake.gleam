@@ -41,10 +41,12 @@ pub fn handshake(
   use handshake_back <- try(mug.receive(socket, 500) |> map_error(TCPError))
   use peer_peer_id <- try(validate_handshake_message(info_hash, handshake_back))
 
-  peer_peer_id
-  |> bit_array.base16_encode
-  |> string.lowercase
-  |> io.println
+  io.println(
+    "Peer ID: "
+    <> peer_peer_id
+    |> bit_array.base16_encode
+    |> string.lowercase,
+  )
 
   Ok(Nil)
 }
