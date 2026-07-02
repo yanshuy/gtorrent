@@ -93,7 +93,7 @@ fn describe_cmd_error(error: CmdError) {
 @external(erlang, "init", "stop")
 pub fn stop(code: Int) -> Nil
 
-@external(erlang, "bittorrent_ffi", "start")
+@external(erlang, "ffi/bittorrent_ffi", "start")
 fn application_start(app: Application) -> Result(Nil, StartError)
 
 pub type Application {
