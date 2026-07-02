@@ -13,6 +13,6 @@
                     simplifile]},
     {description, ""},
     {modules, [bittorrent,
-               handshake]},
+               peer_protocol]},
     {registered, []}
 ]}.

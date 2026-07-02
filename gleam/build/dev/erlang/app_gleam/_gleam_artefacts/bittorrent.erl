@@ -13,7 +13,7 @@
     {decode_error, bencode:decode_error()} |
     {torrent_error, torrent:torrent_error()} |
     {tracker_error, tracker:tracker_error()} |
-    {handshake_error, handshake:handshake_error()}.
+    {peer_error, peer_protocol:peer_error()}.
 
 -type application() :: inets.
 
@@ -56,8 +56,8 @@ describe_cmd_error(Error) ->
         {tracker_error, Err@3} ->
             tracker:describe_error(Err@3);
 
-        {handshake_error, Err@4} ->
-            handshake:describe_error(Err@4)
+        {peer_error, Err@4} ->
+            peer_protocol:describe_error(Err@4)
     end.
 
 -file("src/bittorrent.gleam", 128).
@@ -150,7 +150,7 @@ cmd_handshake(Filename, Endpoint) ->
                                                 fun(Data) ->
                                                     gleam@result:'try'(
                                                         begin
-                                                            _pipe@6 = handshake:handshake(
+                                                            _pipe@6 = peer_protocol:handshake(
                                                                 Ip_addr,
                                                                 Port,
                                                                 Data,
@@ -158,7 +158,7 @@ cmd_handshake(Filename, Endpoint) ->
                                                             ),
                                                             gleam@result:map_error(
                                                                 _pipe@6,
-                                                                fun(Field@0) -> {handshake_error, Field@0} end
+                                                                fun(Field@0) -> {peer_error, Field@0} end
                                                             )
                                                         end,
                                                         fun(_) -> {ok, nil} end

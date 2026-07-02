@@ -7,7 +7,7 @@ import gleam/io
 import gleam/json
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
-import handshake
+import peer_protocol
 import simplifile
 import torrent
 import tracker
@@ -68,7 +68,7 @@ pub type CmdError {
   DecodeError(bencode.DecodeError)
   TorrentError(torrent.TorrentError)
   TrackerError(tracker.TrackerError)
-  HandshakeError(handshake.HandshakeError)
+  PeerError(peer_protocol.PeerError)
 }
 
 fn cmd_decode(encode_str: String) -> Result(Nil, CmdError) {
@@ -118,8 +118,8 @@ fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
   use data <- try(bencode.decode(bits) |> map_error(DecodeError))
 
   use _ <- try(
-    handshake.handshake(ip_addr, port, data, peer_id)
-    |> map_error(HandshakeError),
+    peer_protocol.handshake(ip_addr, port, data, peer_id)
+    |> map_error(PeerError),
   )
 
   Ok(Nil)
@@ -156,7 +156,7 @@ fn describe_cmd_error(error: CmdError) {
     DecodeError(err) -> bencode.describe_error(err)
     TorrentError(err) -> torrent.describe_error(err)
     TrackerError(err) -> tracker.describe_error(err)
-    HandshakeError(err) -> handshake.describe_error(err)
+    PeerError(err) -> peer_protocol.describe_error(err)
   }
 }
 
