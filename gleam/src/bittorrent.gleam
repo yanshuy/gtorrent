@@ -2,10 +2,9 @@ import argv
 import bencode
 import gleam/bit_array
 import gleam/crypto
-import gleam/int
 import gleam/io
 import gleam/json
-import gleam/result.{map_error, replace_error, try}
+import gleam/result.{map_error, try}
 import gleam/string
 import peer_protocol
 import simplifile
@@ -54,6 +53,14 @@ pub fn execute_cmd(args: List(String)) -> Result(Nil, CmdError) {
         _ -> Error(InsufficientArguments("handshake"))
       }
 
+    ["download_piece", ..rest] ->
+      case rest {
+        ["-o", filename, torrent_file, piece_index] -> {
+          todo
+        }
+        _ -> Error(InsufficientArguments("download_piece"))
+      }
+
     [command, ..] -> Error(UnknownCommand(command))
   }
 }
@@ -61,7 +68,6 @@ pub fn execute_cmd(args: List(String)) -> Result(Nil, CmdError) {
 pub type CmdError {
   UnknownCommand(String)
   InvalidArguments
-  InvalidEndpoint
   InsufficientArguments(String)
   AppStartError(StartError)
   FileError(simplifile.FileError)
@@ -109,27 +115,21 @@ fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
 
   use peer_id <- try(load_peer_id() |> map_error(FileError))
 
-  use #(ip_addr, port_str) <- try(
-    validate_endpoint(endpoint) |> replace_error(InvalidEndpoint),
-  )
-  use port <- try(int.parse(port_str) |> replace_error(InvalidEndpoint))
-
   use bits <- try(simplifile.read_bits(filename) |> map_error(FileError))
   use data <- try(bencode.decode(bits) |> map_error(DecodeError))
 
-  use _ <- try(
-    peer_protocol.handshake(ip_addr, port, data, peer_id)
+  use peer_peer_id <- try(
+    peer_protocol.handshake(endpoint, data, peer_id)
     |> map_error(PeerError),
   )
 
+  io.println(
+    "Peer ID: "
+    <> peer_peer_id
+    |> bit_array.base16_encode
+    |> string.lowercase,
+  )
   Ok(Nil)
-}
-
-fn validate_endpoint(endpoint: String) -> Result(#(String, String), Nil) {
-  case string.split(endpoint, on: ":") {
-    [ipv4, port] -> Ok(#(ipv4, port))
-    _ -> Error(Nil)
-  }
 }
 
 fn load_peer_id() -> Result(BitArray, simplifile.FileError) {
@@ -148,7 +148,6 @@ fn describe_cmd_error(error: CmdError) {
   case error {
     UnknownCommand(command) -> "Unknown command: " <> command
     InvalidArguments -> "Usage: your_program.sh <command> <args>"
-    InvalidEndpoint -> "Invalid endpoint. Expected <ip>:<port>."
     InsufficientArguments(command) ->
       "Insufficient arguments for `" <> command <> "`"
     AppStartError(StartError(reason)) -> reason

@@ -32,6 +32,7 @@ pub fn get_peers(
 
   use query_string <- try(construct_query_string(dict, peer_id))
   let req = request.Request(..req, query: option.Some(query_string))
+
   use resp <- try(httpc.send_bits(req) |> map_error(HttpError))
   use resp_bencode <- try(bencode.decode(resp.body) |> map_error(DecodeError))
 

@@ -9,7 +9,6 @@ import gleam/string
 
 pub fn print_info(meta_info: bencode.Bencode) -> Result(Nil, TorrentError) {
   use dict <- try(dict(meta_info))
-
   use tracker <- try(get_string(dict, "announce"))
   io.println("Tracker URL: " <> tracker)
 
@@ -28,11 +27,15 @@ pub fn print_info(meta_info: bencode.Bencode) -> Result(Nil, TorrentError) {
   use piece_length <- try(get_int(info_dict, "piece length"))
   io.println("Piece Length: " <> int.to_string(piece_length))
 
-  use pieces <- try(get_value(info_dict, "pieces"))
-  let assert bencode.BString(bits) = pieces
-  let hashes = encode_piece_hashes(bits, []) |> string.join(with: "\n")
-  io.println("Piece Hashes: \n" <> hashes)
+  use pieces <- try(get_string_bits(info_dict, "pieces"))
 
+  let hashes =
+    split_piece_hashes(pieces, [])
+    |> list.map(bit_array.base16_encode)
+    |> list.map(string.lowercase)
+    |> string.join(with: "\n")
+
+  io.println("Piece Hashes: \n" <> hashes)
   Ok(Nil)
 }
 
@@ -53,14 +56,15 @@ pub fn digest_entries(info_entries: List(#(String, bencode.Bencode))) {
   hash(Sha, bits)
 }
 
-fn encode_piece_hashes(bits: BitArray, acc: List(String)) -> List(String) {
+pub fn split_piece_hashes(
+  bits: BitArray,
+  acc: List(BitArray),
+) -> List(BitArray) {
   case bits {
     <<>> -> list.reverse(acc)
 
-    <<first:bytes-size(20), rest:bits>> -> {
-      let encoded = bit_array.base16_encode(first) |> string.lowercase
-      encode_piece_hashes(rest, [encoded, ..acc])
-    }
+    <<first:bytes-size(20), rest:bits>> ->
+      split_piece_hashes(rest, [first, ..acc])
 
     _ -> acc
   }
@@ -85,7 +89,7 @@ pub fn get_string(
 ) -> Result(String, TorrentError) {
   use value <- try(get_value(torrent, key))
 
-  let error = InvalidTorrent("Expected string for key: " <> key)
+  let error = InvalidTorrent("Expected utf8 string for key: " <> key)
 
   case value {
     bencode.BString(bits) ->

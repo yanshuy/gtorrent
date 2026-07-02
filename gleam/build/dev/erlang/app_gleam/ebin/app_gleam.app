@@ -12,7 +12,6 @@
                     mug,
                     simplifile]},
     {description, ""},
-    {modules, [bittorrent,
-               peer_protocol]},
+    {modules, []},
     {registered, []}
 ]}.

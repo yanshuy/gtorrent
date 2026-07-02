@@ -6,7 +6,6 @@
 
 -type cmd_error() :: {unknown_command, binary()} |
     invalid_arguments |
-    invalid_endpoint |
     {insufficient_arguments, binary()} |
     {app_start_error, start_error()} |
     {file_error, simplifile:file_error()} |
@@ -19,12 +18,12 @@
 
 -type start_error() :: {start_error, binary()}.
 
--file("src/bittorrent.gleam", 164).
+-file("src/bittorrent.gleam", 156).
 -spec stop(integer()) -> nil.
 stop(Code) ->
     init:stop(Code).
 
--file("src/bittorrent.gleam", 147).
+-file("src/bittorrent.gleam", 140).
 -spec describe_cmd_error(cmd_error()) -> binary().
 describe_cmd_error(Error) ->
     case Error of
@@ -33,9 +32,6 @@ describe_cmd_error(Error) ->
 
         invalid_arguments ->
             <<"Usage: your_program.sh <command> <args>"/utf8>>;
-
-        invalid_endpoint ->
-            <<"Invalid endpoint. Expected <ip>:<port>."/utf8>>;
 
         {insufficient_arguments, Command@1} ->
             <<<<"Insufficient arguments for `"/utf8, Command@1/binary>>/binary,
@@ -61,17 +57,6 @@ describe_cmd_error(Error) ->
     end.
 
 -file("src/bittorrent.gleam", 128).
--spec validate_endpoint(binary()) -> {ok, {binary(), binary()}} | {error, nil}.
-validate_endpoint(Endpoint) ->
-    case gleam@string:split(Endpoint, <<":"/utf8>>) of
-        [Ipv4, Port] ->
-            {ok, {Ipv4, Port}};
-
-        _ ->
-            {error, nil}
-    end.
-
--file("src/bittorrent.gleam", 135).
 -spec load_peer_id() -> {ok, bitstring()} | {error, simplifile:file_error()}.
 load_peer_id() ->
     case simplifile_erl:read_bits(<<".peer_id"/utf8>>) of
@@ -86,7 +71,7 @@ load_peer_id() ->
             )
     end.
 
--file("src/bittorrent.gleam", 107).
+-file("src/bittorrent.gleam", 106).
 -spec cmd_handshake(binary(), binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_handshake(Filename, Endpoint) ->
     gleam@result:'try'(
@@ -109,62 +94,48 @@ cmd_handshake(Filename, Endpoint) ->
                 fun(Peer_id) ->
                     gleam@result:'try'(
                         begin
-                            _pipe@2 = validate_endpoint(Endpoint),
-                            gleam@result:replace_error(
+                            _pipe@2 = simplifile_erl:read_bits(Filename),
+                            gleam@result:map_error(
                                 _pipe@2,
-                                invalid_endpoint
+                                fun(Field@0) -> {file_error, Field@0} end
                             )
                         end,
-                        fun(_use0) ->
-                            {Ip_addr, Port_str} = _use0,
+                        fun(Bits) ->
                             gleam@result:'try'(
                                 begin
-                                    _pipe@3 = gleam_stdlib:parse_int(Port_str),
-                                    gleam@result:replace_error(
+                                    _pipe@3 = bencode:decode(Bits),
+                                    gleam@result:map_error(
                                         _pipe@3,
-                                        invalid_endpoint
+                                        fun(Field@0) -> {decode_error, Field@0} end
                                     )
                                 end,
-                                fun(Port) ->
+                                fun(Data) ->
                                     gleam@result:'try'(
                                         begin
-                                            _pipe@4 = simplifile_erl:read_bits(
-                                                Filename
+                                            _pipe@4 = peer_protocol:handshake(
+                                                Endpoint,
+                                                Data,
+                                                Peer_id
                                             ),
                                             gleam@result:map_error(
                                                 _pipe@4,
-                                                fun(Field@0) -> {file_error, Field@0} end
+                                                fun(Field@0) -> {peer_error, Field@0} end
                                             )
                                         end,
-                                        fun(Bits) ->
-                                            gleam@result:'try'(
-                                                begin
-                                                    _pipe@5 = bencode:decode(
-                                                        Bits
-                                                    ),
-                                                    gleam@result:map_error(
-                                                        _pipe@5,
-                                                        fun(Field@0) -> {decode_error, Field@0} end
-                                                    )
-                                                end,
-                                                fun(Data) ->
-                                                    gleam@result:'try'(
-                                                        begin
-                                                            _pipe@6 = peer_protocol:handshake(
-                                                                Ip_addr,
-                                                                Port,
-                                                                Data,
-                                                                Peer_id
-                                                            ),
-                                                            gleam@result:map_error(
-                                                                _pipe@6,
-                                                                fun(Field@0) -> {peer_error, Field@0} end
-                                                            )
-                                                        end,
-                                                        fun(_) -> {ok, nil} end
-                                                    )
-                                                end
-                                            )
+                                        fun(Peer_peer_id) ->
+                                            gleam_stdlib:println(
+                                                <<"Peer ID: "/utf8,
+                                                    (begin
+                                                        _pipe@5 = Peer_peer_id,
+                                                        _pipe@6 = gleam_stdlib:base16_encode(
+                                                            _pipe@5
+                                                        ),
+                                                        string:lowercase(
+                                                            _pipe@6
+                                                        )
+                                                    end)/binary>>
+                                            ),
+                                            {ok, nil}
                                         end
                                     )
                                 end
@@ -176,7 +147,7 @@ cmd_handshake(Filename, Endpoint) ->
         end
     ).
 
--file("src/bittorrent.gleam", 93).
+-file("src/bittorrent.gleam", 92).
 -spec cmd_peers(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_peers(Filename) ->
     gleam@result:'try'(
@@ -245,7 +216,7 @@ cmd_peers(Filename) ->
         end
     ).
 
--file("src/bittorrent.gleam", 85).
+-file("src/bittorrent.gleam", 84).
 -spec cmd_info(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_info(Filename) ->
     gleam@result:'try'(
@@ -281,7 +252,7 @@ cmd_info(Filename) ->
         end
     ).
 
--file("src/bittorrent.gleam", 74).
+-file("src/bittorrent.gleam", 73).
 -spec cmd_decode(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_decode(Encode_str) ->
     gleam@result:'try'(
