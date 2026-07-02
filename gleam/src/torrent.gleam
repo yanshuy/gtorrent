@@ -20,7 +20,9 @@ pub fn print_info(meta_info: bencode.Bencode) -> Result(Nil, TorrentError) {
   io.println("Length: " <> int.to_string(length))
 
   let encoded =
-    digest(info_entries) |> bit_array.base16_encode |> string.lowercase
+    digest_entries(info_entries)
+    |> bit_array.base16_encode
+    |> string.lowercase
   io.println("Info Hash: " <> encoded)
 
   use piece_length <- try(get_int(info_dict, "piece length"))
@@ -46,7 +48,7 @@ pub fn dict(
   }
 }
 
-pub fn digest(info_entries: List(#(String, bencode.Bencode))) {
+pub fn digest_entries(info_entries: List(#(String, bencode.Bencode))) {
   let bits = bencode.BDict(info_entries) |> bencode.encode
   hash(Sha, bits)
 }

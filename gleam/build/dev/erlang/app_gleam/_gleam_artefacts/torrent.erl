@@ -1,14 +1,14 @@
 -module(torrent).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/torrent.gleam").
--export([dict/1, get_value/2, get_int/2, hash/2, digest/1, get_entries/2, get_string/2, print_info/1, get_string_bits/2, describe_error/1]).
+-export([dict/1, get_value/2, get_int/2, hash/2, digest_entries/1, get_entries/2, get_string/2, print_info/1, get_string_bits/2, describe_error/1]).
 -export_type([torrent_error/0, algorithm/0]).
 
 -type torrent_error() :: {missing_key, binary()} | {invalid_torrent, binary()}.
 
 -type algorithm() :: sha.
 
--file("src/torrent.gleam", 54).
+-file("src/torrent.gleam", 56).
 -spec encode_piece_hashes(bitstring(), list(binary())) -> list(binary()).
 encode_piece_hashes(Bits, Acc) ->
     case Bits of
@@ -26,7 +26,7 @@ encode_piece_hashes(Bits, Acc) ->
             Acc
     end.
 
--file("src/torrent.gleam", 37).
+-file("src/torrent.gleam", 39).
 -spec dict(bencode:bencode()) -> {ok,
         gleam@dict:dict(binary(), bencode:bencode())} |
     {error, torrent_error()}.
@@ -40,7 +40,7 @@ dict(Meta_info) ->
             {error, {invalid_torrent, <<"Not valid"/utf8>>}}
     end.
 
--file("src/torrent.gleam", 72).
+-file("src/torrent.gleam", 74).
 -spec get_value(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         bencode:bencode()} |
     {error, torrent_error()}.
@@ -48,7 +48,7 @@ get_value(Torrent, Key) ->
     _pipe = gleam_stdlib:map_get(Torrent, Key),
     gleam@result:replace_error(_pipe, {missing_key, Key}).
 
--file("src/torrent.gleam", 109).
+-file("src/torrent.gleam", 111).
 -spec get_int(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         integer()} |
     {error, torrent_error()}.
@@ -63,21 +63,21 @@ get_int(Torrent, Key) ->
                             <<"Expected integer for key: "/utf8, Key/binary>>}}
             end end).
 
--file("src/torrent.gleam", 141).
+-file("src/torrent.gleam", 143).
 -spec hash(algorithm(), bitstring()) -> bitstring().
 hash(Algorithm, Data) ->
     crypto:hash(Algorithm, Data).
 
--file("src/torrent.gleam", 49).
--spec digest(list({binary(), bencode:bencode()})) -> bitstring().
-digest(Info_entries) ->
+-file("src/torrent.gleam", 51).
+-spec digest_entries(list({binary(), bencode:bencode()})) -> bitstring().
+digest_entries(Info_entries) ->
     Bits = begin
         _pipe = {b_dict, Info_entries},
         bencode:encode(_pipe)
     end,
     crypto:hash(sha, Bits).
 
--file("src/torrent.gleam", 121).
+-file("src/torrent.gleam", 123).
 -spec get_entries(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         list({binary(), bencode:bencode()})} |
     {error, torrent_error()}.
@@ -92,7 +92,7 @@ get_entries(Torrent, Key) ->
                             <<"Expected dictionary for key: "/utf8, Key/binary>>}}
             end end).
 
--file("src/torrent.gleam", 80).
+-file("src/torrent.gleam", 82).
 -spec get_string(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         binary()} |
     {error, torrent_error()}.
@@ -137,7 +137,7 @@ print_info(Meta_info) ->
                                             (erlang:integer_to_binary(Length))/binary>>
                                     ),
                                     Encoded = begin
-                                        _pipe = digest(Info_entries),
+                                        _pipe = digest_entries(Info_entries),
                                         _pipe@1 = gleam_stdlib:base16_encode(
                                             _pipe
                                         ),
@@ -173,12 +173,12 @@ print_info(Meta_info) ->
                                                                         file => <<?FILEPATH/utf8>>,
                                                                         module => <<"torrent"/utf8>>,
                                                                         function => <<"print_info"/utf8>>,
-                                                                        line => 30,
+                                                                        line => 32,
                                                                         value => _assert_fail,
-                                                                        start => 869,
-                                                                        'end' => 910,
-                                                                        pattern_start => 880,
-                                                                        pattern_end => 901}
+                                                                        start => 885,
+                                                                        'end' => 926,
+                                                                        pattern_start => 896,
+                                                                        pattern_end => 917}
                                                                 )
                                                     end,
                                                     Hashes = begin
@@ -209,7 +209,7 @@ print_info(Meta_info) ->
         end
     ).
 
--file("src/torrent.gleam", 96).
+-file("src/torrent.gleam", 98).
 -spec get_string_bits(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         bitstring()} |
     {error, torrent_error()}.
@@ -229,7 +229,7 @@ get_string_bits(Torrent, Key) ->
         end
     ).
 
--file("src/torrent.gleam", 133).
+-file("src/torrent.gleam", 135).
 -spec describe_error(torrent_error()) -> binary().
 describe_error(Error) ->
     case Error of

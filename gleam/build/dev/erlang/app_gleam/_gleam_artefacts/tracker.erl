@@ -1,7 +1,7 @@
 -module(tracker).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/tracker.gleam").
--export([split_peers/2, percent_encode/1, get_peers/1, describe_error/1]).
+-export([split_peers/2, get_peers/2, describe_error/1]).
 -export_type([tracker_error/0]).
 
 -type tracker_error() :: {http_error, gleam@httpc:http_error()} |
@@ -10,7 +10,7 @@
     invalid_url |
     {invalid_response, binary()}.
 
--file("src/tracker.gleam", 76).
+-file("src/tracker.gleam", 77).
 -spec split_peers(bitstring(), list(binary())) -> {ok, list(binary())} |
     {error, nil}.
 split_peers(Peers, Acc) ->
@@ -27,12 +27,12 @@ split_peers(Peers, Acc) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"tracker"/utf8>>,
                                 function => <<"split_peers"/utf8>>,
-                                line => 83,
+                                line => 84,
                                 value => _assert_fail,
-                                start => 2234,
-                                'end' => 2296,
-                                pattern_start => 2245,
-                                pattern_end => 2289})
+                                start => 2281,
+                                'end' => 2343,
+                                pattern_start => 2292,
+                                pattern_end => 2336})
             end,
             {One@1, Two@1, Three@1, Four@1} = case Ip4@1 of
                 <<One:8/unsigned,
@@ -45,12 +45,12 @@ split_peers(Peers, Acc) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"tracker"/utf8>>,
                                 function => <<"split_peers"/utf8>>,
-                                line => 85,
+                                line => 86,
                                 value => _assert_fail@1,
-                                start => 2304,
-                                'end' => 2455,
-                                pattern_start => 2315,
-                                pattern_end => 2449})
+                                start => 2351,
+                                'end' => 2502,
+                                pattern_start => 2362,
+                                pattern_end => 2496})
             end,
             Ip_addr = <<<<<<<<<<<<(erlang:integer_to_binary(One@1))/binary,
                                     "."/utf8>>/binary,
@@ -67,96 +67,12 @@ split_peers(Peers, Acc) ->
             {error, nil}
     end.
 
--file("src/tracker.gleam", 173).
--spec ascii(integer()) -> binary().
-ascii(Byte) ->
-    String@1 = case begin
-        _pipe = <<Byte>>,
-        gleam@bit_array:to_string(_pipe)
-    end of
-        {ok, String} -> String;
-        _assert_fail ->
-            erlang:error(#{gleam_error => let_assert,
-                        message => <<"Pattern match failed, no pattern matched the value."/utf8>>,
-                        file => <<?FILEPATH/utf8>>,
-                        module => <<"tracker"/utf8>>,
-                        function => <<"ascii"/utf8>>,
-                        line => 174,
-                        value => _assert_fail,
-                        start => 4432,
-                        'end' => 4487,
-                        pattern_start => 4443,
-                        pattern_end => 4453})
-    end,
-    String@1.
-
--file("src/tracker.gleam", 163).
--spec is_unreserved(integer()) -> boolean().
-is_unreserved(Byte) ->
-    case Byte of
-        _ when (Byte >= 65) andalso (Byte =< 90) ->
-            true;
-
-        _ when (Byte >= 97) andalso (Byte =< 122) ->
-            true;
-
-        _ when (Byte >= 48) andalso (Byte =< 57) ->
-            true;
-
-        45 ->
-            true;
-
-        46 ->
-            true;
-
-        95 ->
-            true;
-
-        126 ->
-            true;
-
-        _ ->
-            false
-    end.
-
--file("src/tracker.gleam", 146).
--spec percent_encode_loop(bitstring(), list(binary())) -> binary().
-percent_encode_loop(Bits, Acc) ->
-    case Bits of
-        <<>> ->
-            _pipe = lists:reverse(Acc),
-            erlang:list_to_binary(_pipe);
-
-        <<Byte, Rest/bitstring>> ->
-            Part = case is_unreserved(Byte) of
-                true ->
-                    ascii(Byte);
-
-                false ->
-                    <<"%"/utf8,
-                        (gleam_stdlib:base16_encode(<<Byte:8>>))/binary>>
-            end,
-            percent_encode_loop(Rest, [Part | Acc]);
-
-        _ ->
-            erlang:error(#{gleam_error => panic,
-                    message => <<"`panic` expression evaluated."/utf8>>,
-                    file => <<?FILEPATH/utf8>>,
-                    module => <<"tracker"/utf8>>,
-                    function => <<"percent_encode_loop"/utf8>>,
-                    line => 159})
-    end.
-
--file("src/tracker.gleam", 142).
--spec percent_encode(bitstring()) -> binary().
-percent_encode(Bits) ->
-    percent_encode_loop(Bits, []).
-
--file("src/tracker.gleam", 45).
--spec construct_query_string(gleam@dict:dict(binary(), bencode:bencode())) -> {ok,
-        binary()} |
-    {error, tracker_error()}.
-construct_query_string(Torrent) ->
+-file("src/tracker.gleam", 46).
+-spec construct_query_string(
+    gleam@dict:dict(binary(), bencode:bencode()),
+    bitstring()
+) -> {ok, binary()} | {error, tracker_error()}.
+construct_query_string(Torrent, Peer_id) ->
     gleam@result:'try'(
         begin
             _pipe = torrent:get_entries(Torrent, <<"info"/utf8>>),
@@ -167,12 +83,12 @@ construct_query_string(Torrent) ->
         end,
         fun(Info_entries) ->
             Info_hash = begin
-                _pipe@1 = torrent:digest(Info_entries),
-                percent_encode(_pipe@1)
+                _pipe@1 = torrent:digest_entries(Info_entries),
+                helpers:percent_encode(_pipe@1)
             end,
-            Peer_id = begin
-                _pipe@2 = <<"01234567890123456789"/utf8>>,
-                percent_encode(_pipe@2)
+            Peer_id@1 = begin
+                _pipe@2 = Peer_id,
+                helpers:percent_encode(_pipe@2)
             end,
             Info_dict = maps:from_list(Info_entries),
             gleam@result:'try'(
@@ -188,7 +104,7 @@ construct_query_string(Torrent) ->
                     {ok,
                         begin
                             _pipe@4 = [<<"info_hash="/utf8, Info_hash/binary>>,
-                                <<"peer_id="/utf8, Peer_id/binary>>,
+                                <<"peer_id="/utf8, Peer_id@1/binary>>,
                                 <<"port=6881"/utf8>>,
                                 <<"uploaded=0"/utf8>>,
                                 <<"downloaded=0"/utf8>>,
@@ -203,9 +119,9 @@ construct_query_string(Torrent) ->
     ).
 
 -file("src/tracker.gleam", 21).
--spec get_peers(bencode:bencode()) -> {ok, list(binary())} |
+-spec get_peers(bencode:bencode(), bitstring()) -> {ok, list(binary())} |
     {error, tracker_error()}.
-get_peers(Torrent) ->
+get_peers(Torrent, Peer_id) ->
     gleam@result:'try'(
         begin
             _pipe = torrent:dict(Torrent),
@@ -232,7 +148,7 @@ get_peers(Torrent) ->
                         fun(Req) ->
                             Req@1 = gleam@http@request:set_body(Req, <<>>),
                             gleam@result:'try'(
-                                construct_query_string(Dict),
+                                construct_query_string(Dict, Peer_id),
                                 fun(Query_string) ->
                                     Req@2 = {request,
                                         erlang:element(2, Req@1),
@@ -314,7 +230,7 @@ get_peers(Torrent) ->
         end
     ).
 
--file("src/tracker.gleam", 133).
+-file("src/tracker.gleam", 134).
 -spec describe_connect_error(gleam@httpc:connect_error()) -> binary().
 describe_connect_error(Error) ->
     case Error of
@@ -327,7 +243,7 @@ describe_connect_error(Error) ->
                 ")"/utf8>>
     end.
 
--file("src/tracker.gleam", 107).
+-file("src/tracker.gleam", 108).
 -spec describe_error(tracker_error()) -> binary().
 describe_error(Error) ->
     case Error of
@@ -339,7 +255,7 @@ describe_error(Error) ->
                             file => <<?FILEPATH/utf8>>,
                             module => <<"tracker"/utf8>>,
                             function => <<"describe_error"/utf8>>,
-                            line => 111});
+                            line => 112});
 
                 {failed_to_connect, Ip4, Ip6} ->
                     <<<<<<<<"Failed to connect to tracker.\n"/utf8,

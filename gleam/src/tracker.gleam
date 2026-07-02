@@ -1,5 +1,4 @@
 import bencode
-import gleam/bit_array
 import gleam/dict
 import gleam/http/request
 import gleam/httpc
@@ -8,6 +7,7 @@ import gleam/list
 import gleam/option
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
+import helpers
 import torrent
 
 pub type TrackerError {
@@ -20,6 +20,7 @@ pub type TrackerError {
 
 pub fn get_peers(
   torrent: bencode.Bencode,
+  peer_id: BitArray,
 ) -> Result(List(String), TrackerError) {
   use dict <- try(torrent.dict(torrent) |> map_error(TorrentError))
   use tracker_url <- try(
@@ -29,7 +30,7 @@ pub fn get_peers(
   use req <- try(request.to(tracker_url) |> replace_error(InvalidUrl))
   let req = request.set_body(req, <<>>)
 
-  use query_string <- try(construct_query_string(dict))
+  use query_string <- try(construct_query_string(dict, peer_id))
   let req = request.Request(..req, query: option.Some(query_string))
   use resp <- try(httpc.send_bits(req) |> map_error(HttpError))
   use resp_bencode <- try(bencode.decode(resp.body) |> map_error(DecodeError))
@@ -44,14 +45,14 @@ pub fn get_peers(
 
 fn construct_query_string(
   torrent: dict.Dict(String, bencode.Bencode),
+  peer_id: BitArray,
 ) -> Result(String, TrackerError) {
   use info_entries <- try(
     torrent.get_entries(torrent, "info") |> map_error(TorrentError),
   )
+  let info_hash = torrent.digest_entries(info_entries) |> helpers.percent_encode
 
-  let info_hash = torrent.digest(info_entries) |> percent_encode
-
-  let peer_id = <<"01234567890123456789">> |> percent_encode
+  let peer_id = peer_id |> helpers.percent_encode
 
   let info_dict = dict.from_list(info_entries)
   use length <- try(
@@ -137,40 +138,4 @@ fn describe_connect_error(error: httpc.ConnectError) {
     httpc.TlsAlert(code, detail) ->
       "TLS alert: " <> code <> " (" <> detail <> ")"
   }
-}
-
-pub fn percent_encode(bits: BitArray) -> String {
-  percent_encode_loop(bits, [])
-}
-
-fn percent_encode_loop(bits: BitArray, acc: List(String)) -> String {
-  case bits {
-    <<>> -> list.reverse(acc) |> string.concat
-
-    <<byte, rest:bits>> -> {
-      let part = case is_unreserved(byte) {
-        True -> ascii(byte)
-        False -> "%" <> bit_array.base16_encode(<<byte:size(8)>>)
-      }
-
-      percent_encode_loop(rest, [part, ..acc])
-    }
-
-    _ -> panic
-  }
-}
-
-fn is_unreserved(byte: Int) -> Bool {
-  case byte {
-    _ if byte >= 65 && byte <= 90 -> True
-    _ if byte >= 97 && byte <= 122 -> True
-    _ if byte >= 48 && byte <= 57 -> True
-    45 | 46 | 95 | 126 -> True
-    _ -> False
-  }
-}
-
-fn ascii(byte: Int) -> String {
-  let assert Ok(string) = <<byte>> |> bit_array.to_string
-  string
 }
