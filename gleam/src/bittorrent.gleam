@@ -55,9 +55,8 @@ pub fn execute_cmd(args: List(String)) -> Result(Nil, CmdError) {
 
     ["download_piece", ..rest] ->
       case rest {
-        ["-o", filename, torrent_file, piece_index] -> {
-          todo
-        }
+        ["-o", filename, torrent_file, piece_index] ->
+          cmd_download_piece(filename, torrent_file, piece_index)
         _ -> Error(InsufficientArguments("download_piece"))
       }
 
@@ -130,6 +129,21 @@ fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
     |> string.lowercase,
   )
   Ok(Nil)
+}
+
+fn cmd_download_piece(
+  filename: String,
+  torrent_file: String,
+  piece_index: int,
+) -> Result(Nil, CmdError) {
+  use _ <- try(application_start(Inets) |> map_error(AppStartError))
+
+  use peer_id <- try(load_peer_id() |> map_error(FileError))
+
+  use bits <- try(simplifile.read_bits(filename) |> map_error(FileError))
+  use data <- try(bencode.decode(bits) |> map_error(DecodeError))
+
+  todo
 }
 
 fn load_peer_id() -> Result(BitArray, simplifile.FileError) {

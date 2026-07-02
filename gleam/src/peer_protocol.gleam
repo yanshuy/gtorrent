@@ -1,6 +1,7 @@
 import bencode
 import gleam/dict
 import gleam/int
+import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
 import mug.{ConnectionOptions}
@@ -19,7 +20,6 @@ pub type PeerError {
 
 pub type ChokeState {
   Choked
-  Unchoked
 }
 
 pub type InterestState {
@@ -29,20 +29,36 @@ pub type InterestState {
 pub type PeerState {
   BitField
   PeerState(choke: ChokeState, interest: InterestState)
+  RequestBlock(begin: Int)
 }
 
 pub fn ask_one_piece(
   torrent: bencode.Bencode,
+  piece_index: Int,
   peer_id: BitArray,
 ) -> Result(Nil, PeerError) {
   use dict <- try(torrent.dict(torrent) |> map_error(TorrentError))
-  use tracker_url <- try(
-    torrent.get_string(dict, "announce") |> map_error(TorrentError),
-  )
   use info_entries <- try(
     torrent.get_entries(dict, "info") |> map_error(TorrentError),
   )
   let info_hash = torrent.digest_entries(info_entries)
+  let info_dict = dict.from_list(info_entries)
+
+  use piece_length <- try(
+    torrent.get_int(info_dict, "piece length") |> map_error(TorrentError),
+  )
+  use piece_hashes <- try(
+    torrent.get_string_bits(info_dict, "pieces")
+    |> map_error(TorrentError),
+  )
+  use piece_hash <- try(
+    torrent.split_piece_hashes(piece_hashes, [])
+    |> list.drop(piece_index)
+    |> list.first
+    |> replace_error(todo),
+    //what to map to?
+  )
+  let piece = #(piece_index, piece_length, piece_hash)
 
   use peers <- try(
     tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
@@ -55,13 +71,7 @@ pub fn ask_one_piece(
 
   use socket <- try(connect(ip4_addr, port))
   use peer_peer_id <- try(peer_handshake(socket, info_hash, peer_id))
-
-  use pieces <- try(
-    torrent.get_string_bits(dict.from_list(info_entries), "pieces")
-    |> map_error(TorrentError),
-  )
-
-  use _ <- try(peer_communicate(socket, BitField))
+  use _ <- try(peer_communicate(socket, piece, BitField))
   todo
 }
 
@@ -112,14 +122,19 @@ pub fn peer_handshake(
   }
 }
 
-fn peer_communicate(socket: mug.Socket, state: PeerState) {
+fn peer_communicate(
+  socket: mug.Socket,
+  piece: #(Int, Int, BitArray),
+  state: PeerState,
+) {
+  let #(piece_index, piece_length, piece_hash) = piece
   case state {
     BitField -> {
       use message <- try(mug.receive(socket, 500) |> map_error(TCPError))
       use #(message_id, _payload) <- try(parse_peer_message(message))
 
       case message_id {
-        5 -> peer_communicate(socket, PeerState(Choked, Interested))
+        5 -> peer_communicate(socket, piece, PeerState(Choked, Interested))
         _ -> todo
         //what to do here?
       }
@@ -132,15 +147,16 @@ fn peer_communicate(socket: mug.Socket, state: PeerState) {
       use #(message_id, _) <- try(parse_peer_message(message))
 
       case message_id {
-        1 -> peer_communicate(socket, PeerState(Unchoked, Interested))
+        1 -> peer_communicate(socket, piece, RequestBlock(0))
+
         _ -> todo
         // what to do ?
       }
     }
-    PeerState(choke: Unchoked, interest: Interested) -> {
-      use message <- try(mug.receive(socket, 500) |> map_error(TCPError))
-      use #(message_id, _) <- try(parse_peer_message(message))
-      todo
+    RequestBlock(begin) -> {
+      let request_message = <<piece_index:int, begin:int>>
+
+      peer_communicate(socket, piece, RequestBlock(begin + 16_384))
     }
   }
 }
