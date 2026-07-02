@@ -10,7 +10,7 @@
     {handshake_error, binary()} |
     {t_c_p_error, mug:error()}.
 
--file("src/handshake.gleam", 67).
+-file("src/handshake.gleam", 69).
 -spec validate_handshake_message(bitstring(), bitstring()) -> {ok, bitstring()} |
     {error, handshake_error()}.
 validate_handshake_message(Info_hash, Resp) ->
@@ -32,7 +32,7 @@ validate_handshake_message(Info_hash, Resp) ->
             {error, invalid_handshake}
     end.
 
--file("src/handshake.gleam", 52).
+-file("src/handshake.gleam", 54).
 -spec connect(binary(), integer()) -> {ok, mug:socket()} |
     {error, handshake_error()}.
 connect(Host, Port) ->
@@ -47,7 +47,7 @@ connect(Host, Port) ->
                             file => <<?FILEPATH/utf8>>,
                             module => <<"handshake"/utf8>>,
                             function => <<"connect"/utf8>>,
-                            line => 62})
+                            line => 64})
             end end).
 
 -file("src/handshake.gleam", 17).
@@ -106,15 +106,17 @@ handshake(Host, Port, Torrent, Peer_id) ->
                                                     Handshake_back
                                                 ),
                                                 fun(Peer_peer_id) ->
-                                                    _pipe@4 = Peer_peer_id,
-                                                    _pipe@5 = gleam_stdlib:base16_encode(
-                                                        _pipe@4
-                                                    ),
-                                                    _pipe@6 = string:lowercase(
-                                                        _pipe@5
-                                                    ),
                                                     gleam_stdlib:println(
-                                                        _pipe@6
+                                                        <<"Peer ID: "/utf8,
+                                                            (begin
+                                                                _pipe@4 = Peer_peer_id,
+                                                                _pipe@5 = gleam_stdlib:base16_encode(
+                                                                    _pipe@4
+                                                                ),
+                                                                string:lowercase(
+                                                                    _pipe@5
+                                                                )
+                                                            end)/binary>>
                                                     ),
                                                     {ok, nil}
                                                 end
@@ -130,7 +132,7 @@ handshake(Host, Port, Torrent, Peer_id) ->
         end
     ).
 
--file("src/handshake.gleam", 88).
+-file("src/handshake.gleam", 90).
 -spec describe_error(handshake_error()) -> binary().
 describe_error(Error) ->
     case Error of
