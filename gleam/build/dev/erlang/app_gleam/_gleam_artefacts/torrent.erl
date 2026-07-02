@@ -1,14 +1,14 @@
 -module(torrent).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/torrent.gleam").
--export([print_info/1, describe_error/1]).
+-export([dict/1, get_value/2, get_int/2, hash/2, digest/1, get_entries/2, get_string/2, print_info/1, get_string_bits/2, describe_error/1]).
 -export_type([torrent_error/0, algorithm/0]).
 
--type torrent_error() :: {invalid_torrent, binary()}.
+-type torrent_error() :: {missing_key, binary()} | {invalid_torrent, binary()}.
 
 -type algorithm() :: sha.
 
--file("src/torrent.gleam", 46).
+-file("src/torrent.gleam", 54).
 -spec encode_piece_hashes(bitstring(), list(binary())) -> list(binary()).
 encode_piece_hashes(Bits, Acc) ->
     case Bits of
@@ -26,18 +26,29 @@ encode_piece_hashes(Bits, Acc) ->
             Acc
     end.
 
--file("src/torrent.gleam", 63).
+-file("src/torrent.gleam", 37).
+-spec dict(bencode:bencode()) -> {ok,
+        gleam@dict:dict(binary(), bencode:bencode())} |
+    {error, torrent_error()}.
+dict(Meta_info) ->
+    case Meta_info of
+        {b_dict, Entries} ->
+            Dict = maps:from_list(Entries),
+            {ok, Dict};
+
+        _ ->
+            {error, {invalid_torrent, <<"Not valid"/utf8>>}}
+    end.
+
+-file("src/torrent.gleam", 72).
 -spec get_value(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         bencode:bencode()} |
     {error, torrent_error()}.
 get_value(Torrent, Key) ->
     _pipe = gleam_stdlib:map_get(Torrent, Key),
-    gleam@result:replace_error(
-        _pipe,
-        {invalid_torrent, <<"Missing key: "/utf8, Key/binary>>}
-    ).
+    gleam@result:replace_error(_pipe, {missing_key, Key}).
 
--file("src/torrent.gleam", 87).
+-file("src/torrent.gleam", 109).
 -spec get_int(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         integer()} |
     {error, torrent_error()}.
@@ -52,7 +63,12 @@ get_int(Torrent, Key) ->
                             <<"Expected integer for key: "/utf8, Key/binary>>}}
             end end).
 
--file("src/torrent.gleam", 41).
+-file("src/torrent.gleam", 141).
+-spec hash(algorithm(), bitstring()) -> bitstring().
+hash(Algorithm, Data) ->
+    crypto:hash(Algorithm, Data).
+
+-file("src/torrent.gleam", 49).
 -spec digest(list({binary(), bencode:bencode()})) -> bitstring().
 digest(Info_entries) ->
     Bits = begin
@@ -61,7 +77,7 @@ digest(Info_entries) ->
     end,
     crypto:hash(sha, Bits).
 
--file("src/torrent.gleam", 99).
+-file("src/torrent.gleam", 121).
 -spec get_entries(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         list({binary(), bencode:bencode()})} |
     {error, torrent_error()}.
@@ -76,7 +92,7 @@ get_entries(Torrent, Key) ->
                             <<"Expected dictionary for key: "/utf8, Key/binary>>}}
             end end).
 
--file("src/torrent.gleam", 71).
+-file("src/torrent.gleam", 80).
 -spec get_string(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
         binary()} |
     {error, torrent_error()}.
@@ -100,9 +116,9 @@ get_string(Torrent, Key) ->
 -file("src/torrent.gleam", 10).
 -spec print_info(bencode:bencode()) -> {ok, nil} | {error, torrent_error()}.
 print_info(Meta_info) ->
-    case Meta_info of
-        {b_dict, Entries} ->
-            Dict = maps:from_list(Entries),
+    gleam@result:'try'(
+        dict(Meta_info),
+        fun(Dict) ->
             gleam@result:'try'(
                 get_string(Dict, <<"announce"/utf8>>),
                 fun(Tracker) ->
@@ -157,12 +173,12 @@ print_info(Meta_info) ->
                                                                         file => <<?FILEPATH/utf8>>,
                                                                         module => <<"torrent"/utf8>>,
                                                                         function => <<"print_info"/utf8>>,
-                                                                        line => 31,
+                                                                        line => 30,
                                                                         value => _assert_fail,
-                                                                        start => 977,
-                                                                        'end' => 1018,
-                                                                        pattern_start => 988,
-                                                                        pattern_end => 1009}
+                                                                        start => 869,
+                                                                        'end' => 910,
+                                                                        pattern_start => 880,
+                                                                        pattern_end => 901}
                                                                 )
                                                     end,
                                                     Hashes = begin
@@ -189,16 +205,37 @@ print_info(Meta_info) ->
                         end
                     )
                 end
-            );
+            )
+        end
+    ).
 
-        _ ->
-            {error, {invalid_torrent, <<"Not a valid torrent"/utf8>>}}
-    end.
+-file("src/torrent.gleam", 96).
+-spec get_string_bits(gleam@dict:dict(binary(), bencode:bencode()), binary()) -> {ok,
+        bitstring()} |
+    {error, torrent_error()}.
+get_string_bits(Torrent, Key) ->
+    gleam@result:'try'(
+        get_value(Torrent, Key),
+        fun(Value) ->
+            Error = {invalid_torrent,
+                <<"Expected string for key: "/utf8, Key/binary>>},
+            case Value of
+                {b_string, Bits} ->
+                    {ok, Bits};
 
--file("src/torrent.gleam", 111).
+                _ ->
+                    {error, Error}
+            end
+        end
+    ).
+
+-file("src/torrent.gleam", 133).
 -spec describe_error(torrent_error()) -> binary().
 describe_error(Error) ->
     case Error of
+        {missing_key, Key} ->
+            <<"Missing key: "/utf8, Key/binary>>;
+
         {invalid_torrent, Message} ->
             Message
     end.

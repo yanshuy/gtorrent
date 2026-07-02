@@ -1,0 +1,5 @@
+[packages]
+gleam_http = "4.3.0"
+gleam_stdlib = "1.0.3"
+gleeunit = "1.11.0"
+gleam_erlang = "1.3.0"

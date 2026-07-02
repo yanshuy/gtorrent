@@ -1,7 +1,7 @@
 -module(bencode).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/bencode.gleam").
--export([decode/1, encode/1, to_json/1, stringify_error/1]).
+-export([decode/1, encode/1, to_json/1, describe_error/1]).
 -export_type([bencode/0, decode_error/0]).
 
 -type bencode() :: {b_dict, list({binary(), bencode()})} |
@@ -330,8 +330,8 @@ to_json(Value) ->
     end.
 
 -file("src/bencode.gleam", 186).
--spec stringify_error(decode_error()) -> binary().
-stringify_error(Error) ->
+-spec describe_error(decode_error()) -> binary().
+describe_error(Error) ->
     case Error of
         unexpected_eof ->
             <<"Unexpected end of input"/utf8>>;

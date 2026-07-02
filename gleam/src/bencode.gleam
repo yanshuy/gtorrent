@@ -183,7 +183,7 @@ pub fn to_json(value: Bencode) -> json.Json {
   }
 }
 
-pub fn stringify_error(error: DecodeError) -> String {
+pub fn describe_error(error: DecodeError) -> String {
   case error {
     UnexpectedEof -> "Unexpected end of input"
     InvalidInteger -> "Invalid integer"
