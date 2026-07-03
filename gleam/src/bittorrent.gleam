@@ -73,7 +73,7 @@ pub type CmdError {
   DecodeError(bencode.DecodeError)
   TorrentError(torrent.TorrentError)
   TrackerError(tracker.TrackerError)
-  PeerError(peer_protocol.PeerError)
+  PeerError(peer_protocol.ProtocolError)
 }
 
 fn cmd_decode(encode_str: String) -> Result(Nil, CmdError) {

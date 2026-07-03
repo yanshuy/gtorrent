@@ -1,6 +1,7 @@
 import bencode
 import gleam/bit_array
 import gleam/bool
+import gleam/crypto
 import gleam/dict
 import gleam/int
 import gleam/list
@@ -52,6 +53,12 @@ pub type PieceDownload {
   )
 }
 
+pub type PeerOutcome {
+  Continue(PieceDownload)
+  PieceDownloaded(BitArray)
+  PeerDoesNotHavePiece
+}
+
 pub fn ask_one_piece(
   torrent: bencode.Bencode,
   piece_index: Int,
@@ -90,7 +97,7 @@ pub fn ask_one_piece(
 
   use socket <- try(connect(ip4_addr, port))
   use _peer_peer_id <- try(peer_handshake(socket, info_hash, peer_id))
-  use _ <- try(peer_exchange(
+  use outcome <- try(peer_exchange(
     socket,
     PeerState(choked: True, interested: False),
     PieceDownload(
@@ -157,18 +164,16 @@ fn peer_exchange(
   socket: mug.Socket,
   state: PeerState,
   piece: PieceDownload,
-) -> Result(PeerState, ProtocolError) {
+) -> Result(PeerOutcome, ProtocolError) {
   use message <- try(receive_message(socket))
   case message {
-    Choke -> Ok(PeerState(..state, choked: True))
-    Unchoke -> {
-      use _ <- try(request_piece(socket, piece))
-      peer_exchange(socket, PeerState(..state, choked: False), piece)
-    }
+    Choke -> continue(socket, PeerState(..state, choked: True), piece)
+    Unchoke -> continue(socket, PeerState(..state, choked: False), piece)
+
     Have -> peer_exchange(socket, state, piece)
     BitField(payload) -> {
       use state <- try(handle_bit_field(socket, payload, state))
-      peer_exchange(socket, state, piece)
+      continue(socket, state, piece)
     }
     Piece(_, _, _) -> {
       use piece <- try(handle_piece_block(message, piece))
@@ -178,11 +183,29 @@ fn peer_exchange(
           peer_exchange(socket, state, piece)
         }
         True -> {
-          todo
+          let binary = list.reverse(piece.blocks) |> bit_array.concat
+          use _ <- try(verify_piece(binary, piece.hash))
+          continue(socket, state, piece)
         }
       }
     }
     message -> Error(UnexpectedMessage(peer_message_id(message)))
+  }
+}
+
+fn continue(
+  socket: mug.Socket,
+  state: PeerState,
+  piece: PieceDownload,
+) -> Result(PeerOutcome, ProtocolError) {
+  case state {
+    PeerState(choked: _, interested: False) -> Ok(PeerDoesNotHavePiece)
+    PeerState(choked: False, interested: True) -> {
+      use _ <- try(request_piece(socket, piece))
+      peer_exchange(socket, state, piece)
+    }
+    PeerState(choked: True, interested: True) ->
+      peer_exchange(socket, state, piece)
   }
 }
 
@@ -313,6 +336,15 @@ fn peer_message_id(message: PeerMessage) -> Int {
     BitField(_) -> 5
     Request(_, _, _) -> 6
     Piece(_, _, _) -> 7
+  }
+}
+
+fn verify_piece(binary: BitArray, hash: BitArray) {
+  let calc = crypto.hash(crypto.Sha1, binary)
+
+  case calc == hash {
+    True -> Ok(Nil)
+    False -> Error(ProtocolError("hashes dont match"))
   }
 }
 
