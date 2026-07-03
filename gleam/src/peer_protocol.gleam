@@ -1,4 +1,6 @@
 import bencode
+import gleam/bit_array
+import gleam/bool
 import gleam/dict
 import gleam/int
 import gleam/list
@@ -8,35 +10,43 @@ import mug.{ConnectionOptions}
 import torrent
 import tracker
 
-pub type PeerError {
+pub type ProtocolError {
   InvalidEndpoint
   InvalidResponse
   InfoHashMismatch
+  ProtocolError(String)
   TCPError(mug.Error)
   TorrentError(torrent.TorrentError)
   TrackerError(tracker.TrackerError)
-  ProtocolError(String)
+  UnknownMessageId(Int)
+  UnexpectedMessage(Int)
 }
 
-pub type ChokeState {
-  Choked
-}
-
-pub type InterestState {
+pub type PeerMessage {
+  Choke
+  Unchoke
   Interested
+  NotInterested
+  Have
+  BitField(BitArray)
+  Request(piece_index: Int, begin: Int, length: Int)
+  Piece(piece_index: Int, begin: Int, block: BitArray)
+}
+
+pub type Dir {
+  Tx
+  Rx
 }
 
 pub type PeerState {
-  BitField
-  PeerState(choke: ChokeState, interest: InterestState)
-  RequestBlock(begin: Int)
+  PeerState(choked: Bool, interested: Bool, piece_offset: Int)
 }
 
 pub fn ask_one_piece(
   torrent: bencode.Bencode,
   piece_index: Int,
   peer_id: BitArray,
-) -> Result(Nil, PeerError) {
+) -> Result(Nil, ProtocolError) {
   use dict <- try(torrent.dict(torrent) |> map_error(TorrentError))
   use info_entries <- try(
     torrent.get_entries(dict, "info") |> map_error(TorrentError),
@@ -71,11 +81,11 @@ pub fn ask_one_piece(
 
   use socket <- try(connect(ip4_addr, port))
   use peer_peer_id <- try(peer_handshake(socket, info_hash, peer_id))
-  use _ <- try(peer_communicate(socket, piece, BitField))
+  use _ <- try(peer_communicate(socket, piece, PeerState(True, False, 0)))
   todo
 }
 
-fn connect(host: String, port: Int) -> Result(mug.Socket, PeerError) {
+fn connect(host: String, port: Int) -> Result(mug.Socket, ProtocolError) {
   mug.connect(ConnectionOptions(
     host: host,
     port: port,
@@ -94,7 +104,7 @@ pub fn peer_handshake(
   socket: mug.Socket,
   info_hash: BitArray,
   peer_id: BitArray,
-) -> Result(BitArray, PeerError) {
+) -> Result(BitArray, ProtocolError) {
   let handshake_msg = <<
     19:int,
     "BitTorrent protocol",
@@ -122,58 +132,131 @@ pub fn peer_handshake(
   }
 }
 
+const block_size = 16_384
+
 fn peer_communicate(
   socket: mug.Socket,
   piece: #(Int, Int, BitArray),
   state: PeerState,
-) {
-  let #(piece_index, piece_length, piece_hash) = piece
-  case state {
-    BitField -> {
-      use message <- try(mug.receive(socket, 500) |> map_error(TCPError))
-      use #(message_id, _payload) <- try(parse_peer_message(message))
+) -> Result(PeerState, ProtocolError) {
+  use message <- try(receive_message(socket))
+  case message {
+    Choke -> Ok(PeerState(..state, choked: True))
+    Unchoke ->
+      peer_communicate(socket, piece, PeerState(..state, choked: False))
+    Have -> peer_communicate(socket, piece, state)
+    BitField(payload) -> handle_bit_field(socket, payload, state)
+    Piece(_, _, _) -> handle_piece(piece, message, state)
+    message -> Error(UnexpectedMessage(peer_message_id(message)))
+  }
+}
 
-      case message_id {
-        5 -> peer_communicate(socket, piece, PeerState(Choked, Interested))
-        _ -> todo
-        //what to do here?
-      }
+fn handle_bit_field(
+  socket: mug.Socket,
+  payload: BitArray,
+  state: PeerState,
+) -> Result(PeerState, ProtocolError) {
+  let interested = True
+
+  case interested {
+    True -> {
+      let id = peer_message_id(Interested)
+      let message = <<1:big-size(4)-unit(8), id:int>>
+      use _ <- try(mug.send(socket, message) |> map_error(TCPError))
+      Ok(PeerState(..state, interested: True))
     }
-    PeerState(choke: Choked, interest: Interested) -> {
-      let interested = <<1:size(4)-unit(8), 2:int>>
-      use _ <- try(mug.send(socket, interested) |> map_error(TCPError))
-
-      use message <- try(mug.receive(socket, 500) |> map_error(TCPError))
-      use #(message_id, _) <- try(parse_peer_message(message))
-
-      case message_id {
-        1 -> peer_communicate(socket, piece, RequestBlock(0))
-
-        _ -> todo
-        // what to do ?
-      }
-    }
-    RequestBlock(begin) -> {
-      let request_message = <<piece_index:int, begin:int>>
-
-      peer_communicate(socket, piece, RequestBlock(begin + 16_384))
+    False -> {
+      let id = peer_message_id(NotInterested)
+      let message = <<1:big-size(4)-unit(8), id:int>>
+      use _ <- try(mug.send(socket, message) |> map_error(TCPError))
+      Ok(PeerState(..state, interested: True))
     }
   }
 }
 
-fn parse_peer_message(
-  message: BitArray,
-) -> Result(#(Int, BitArray), PeerError) {
-  case message {
-    <<
-      msg_len:size(4)-unit(8),
-      msg_id:int,
-      payload:bits-size(msg_len - 1)-unit(8),
-      _:bits,
-    >> -> {
-      Ok(#(msg_id, payload))
+fn handle_piece(
+  piece: #(Int, Int, BitArray),
+  message: PeerMessage,
+  state: PeerState,
+) -> Result(PeerState, ProtocolError) {
+  let #(piece_index, piece_length, piece_hash) = piece
+  let assert Piece(peer_piece_index, begin, block) = message
+
+  use <- bool.guard(
+    peer_piece_index != piece_index,
+    return: Error(ProtocolError("piece index mismatch")),
+  )
+  use <- bool.guard(
+    begin != state.piece_offset,
+    return: Error(ProtocolError("piece index mismatch")),
+  )
+  let rem = piece_length - begin
+  let is_incomplete_block =
+    rem > block_size && bit_array.byte_size(block) != block_size
+  use <- bool.guard(
+    is_incomplete_block,
+    return: Error(ProtocolError("incomplete block")),
+  )
+  //download
+  Ok(PeerState(..state, piece_offset: state.piece_offset + block_size))
+  todo
+}
+
+fn receive_message(socket: mug.Socket) -> Result(PeerMessage, ProtocolError) {
+  use bits <- try(mug.receive_exact(socket, 4, 1000) |> map_error(TCPError))
+  let assert <<message_length:unsigned-big-size(4 * 8)>> = bits
+
+  case message_length {
+    // keep alive
+    0 -> receive_message(socket)
+    _ -> {
+      use message <- try(
+        mug.receive_exact(socket, message_length, 1000) |> map_error(TCPError),
+      )
+      parse_message(message)
     }
-    _ -> Error(InvalidResponse)
+  }
+}
+
+fn parse_message(message: BitArray) -> Result(PeerMessage, ProtocolError) {
+  let assert <<message_id, payload:bits>> = message
+  case message_id {
+    0 -> Ok(Choke)
+    1 -> Ok(Unchoke)
+    2 -> Ok(Interested)
+    3 -> Ok(NotInterested)
+    4 -> Ok(Have)
+    5 -> Ok(BitField(payload))
+    6 -> {
+      let assert <<
+        piece_index:big-size(4)-unit(8),
+        begin:big-size(4)-unit(8),
+        length:big-size(4)-unit(8),
+      >> = payload
+      Ok(Request(piece_index, begin, length))
+    }
+    7 -> {
+      let assert <<
+        piece_index:big-size(4)-unit(8),
+        begin:big-size(4)-unit(8),
+        block:bits,
+      >> = payload
+      Ok(Piece(piece_index, begin, block))
+    }
+    id -> Error(UnknownMessageId(id))
+  }
+}
+
+fn peer_message_id(message: PeerMessage) -> Int {
+  case message {
+    Choke -> 0
+    Unchoke -> 1
+    Interested -> 2
+    NotInterested -> 3
+    Have -> 4
+    BitField(_) -> 5
+    Request(_, _, _) -> 6
+    Piece(_, _, _) -> 7
   }
 }
 
@@ -191,7 +274,7 @@ pub fn handshake(
   endpoint: String,
   torrent: bencode.Bencode,
   peer_id: BitArray,
-) -> Result(BitArray, PeerError) {
+) -> Result(BitArray, ProtocolError) {
   use #(ip4_addr, port) <- try(
     validate_endpoint(endpoint) |> replace_error(InvalidEndpoint),
   )
@@ -206,7 +289,7 @@ pub fn handshake(
   peer_handshake(socket, info_hash, peer_id)
 }
 
-pub fn describe_error(error: PeerError) -> String {
+pub fn describe_error(error: ProtocolError) -> String {
   case error {
     InvalidEndpoint -> "Invalid endpoint. Expected <ip>:<port>."
     InvalidResponse -> "Received an invalid response from the peer"
@@ -214,6 +297,9 @@ pub fn describe_error(error: PeerError) -> String {
     TCPError(err) -> mug.describe_error(err)
     TorrentError(err) -> torrent.describe_error(err)
     TrackerError(err) -> tracker.describe_error(err)
-    ProtocolError(msg) -> msg
+    ProtocolError(err) -> err
+    UnknownMessageId(msg_id) -> "Unknown Message Id" <> int.to_string(msg_id)
+    UnexpectedMessage(msg_id) ->
+      "Unexpected peer message: " <> int.to_string(msg_id)
   }
 }
