@@ -39,7 +39,17 @@ pub type Dir {
 }
 
 pub type PeerState {
-  PeerState(choked: Bool, interested: Bool, piece_offset: Int)
+  PeerState(choked: Bool, interested: Bool)
+}
+
+pub type PieceDownload {
+  PieceDownload(
+    index: Int,
+    length: Int,
+    hash: BitArray,
+    offset: Int,
+    blocks: List(BitArray),
+  )
 }
 
 pub fn ask_one_piece(
@@ -68,7 +78,6 @@ pub fn ask_one_piece(
     |> replace_error(todo),
     //what to map to?
   )
-  let piece = #(piece_index, piece_length, piece_hash)
 
   use peers <- try(
     tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
@@ -80,8 +89,18 @@ pub fn ask_one_piece(
   )
 
   use socket <- try(connect(ip4_addr, port))
-  use peer_peer_id <- try(peer_handshake(socket, info_hash, peer_id))
-  use _ <- try(peer_communicate(socket, piece, PeerState(True, False, 0)))
+  use _peer_peer_id <- try(peer_handshake(socket, info_hash, peer_id))
+  use _ <- try(peer_exchange(
+    socket,
+    PeerState(choked: True, interested: False),
+    PieceDownload(
+      index: piece_index,
+      length: piece_length,
+      hash: piece_hash,
+      offset: 0,
+      blocks: [],
+    ),
+  ))
   todo
 }
 
@@ -134,19 +153,35 @@ pub fn peer_handshake(
 
 const block_size = 16_384
 
-fn peer_communicate(
+fn peer_exchange(
   socket: mug.Socket,
-  piece: #(Int, Int, BitArray),
   state: PeerState,
+  piece: PieceDownload,
 ) -> Result(PeerState, ProtocolError) {
   use message <- try(receive_message(socket))
   case message {
     Choke -> Ok(PeerState(..state, choked: True))
-    Unchoke ->
-      peer_communicate(socket, piece, PeerState(..state, choked: False))
-    Have -> peer_communicate(socket, piece, state)
-    BitField(payload) -> handle_bit_field(socket, payload, state)
-    Piece(_, _, _) -> handle_piece(piece, message, state)
+    Unchoke -> {
+      use _ <- try(request_piece(socket, piece))
+      peer_exchange(socket, PeerState(..state, choked: False), piece)
+    }
+    Have -> peer_exchange(socket, state, piece)
+    BitField(payload) -> {
+      use state <- try(handle_bit_field(socket, payload, state))
+      peer_exchange(socket, state, piece)
+    }
+    Piece(_, _, _) -> {
+      use piece <- try(handle_piece_block(message, piece))
+      case piece.offset == piece.length {
+        False -> {
+          use _ <- try(request_piece(socket, piece))
+          peer_exchange(socket, state, piece)
+        }
+        True -> {
+          todo
+        }
+      }
+    }
     message -> Error(UnexpectedMessage(peer_message_id(message)))
   }
 }
@@ -169,37 +204,58 @@ fn handle_bit_field(
       let id = peer_message_id(NotInterested)
       let message = <<1:big-size(4)-unit(8), id:int>>
       use _ <- try(mug.send(socket, message) |> map_error(TCPError))
-      Ok(PeerState(..state, interested: True))
+      Ok(PeerState(..state, interested: False))
     }
   }
 }
 
-fn handle_piece(
-  piece: #(Int, Int, BitArray),
+fn handle_piece_block(
   message: PeerMessage,
-  state: PeerState,
-) -> Result(PeerState, ProtocolError) {
-  let #(piece_index, piece_length, piece_hash) = piece
+  piece: PieceDownload,
+) -> Result(PieceDownload, ProtocolError) {
   let assert Piece(peer_piece_index, begin, block) = message
 
   use <- bool.guard(
-    peer_piece_index != piece_index,
+    peer_piece_index != piece.index,
     return: Error(ProtocolError("piece index mismatch")),
   )
   use <- bool.guard(
-    begin != state.piece_offset,
+    begin != piece.offset,
     return: Error(ProtocolError("piece index mismatch")),
   )
-  let rem = piece_length - begin
+  let rem = piece.length - begin
   let is_incomplete_block =
     rem > block_size && bit_array.byte_size(block) != block_size
   use <- bool.guard(
     is_incomplete_block,
     return: Error(ProtocolError("incomplete block")),
   )
-  //download
-  Ok(PeerState(..state, piece_offset: state.piece_offset + block_size))
-  todo
+
+  Ok(
+    PieceDownload(..piece, offset: piece.offset + block_size, blocks: [
+      block,
+      ..piece.blocks
+    ]),
+  )
+}
+
+fn request_piece(
+  socket: mug.Socket,
+  piece: PieceDownload,
+) -> Result(Nil, ProtocolError) {
+  let PieceDownload(index, length, _hash, offset, _blocks) = piece
+
+  let block_length = int.min(length - offset, block_size)
+  let req = Request(piece_index: index, begin: offset, length: block_length)
+  let id = peer_message_id(req)
+
+  let request_message = <<
+    id:int,
+    req.piece_index:big-size(4)-unit(8),
+    req.begin:big-size(4)-unit(8),
+    req.length:big-size(4)-unit(8),
+  >>
+  mug.send(socket, request_message) |> map_error(TCPError)
 }
 
 fn receive_message(socket: mug.Socket) -> Result(PeerMessage, ProtocolError) {
