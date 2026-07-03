@@ -1,1 +1,0 @@
--record(connect_failed_ipv4, {ipv4 :: mug:error()}).

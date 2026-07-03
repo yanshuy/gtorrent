@@ -1,1 +1,0 @@
--record(connect_failed_ipv6, {ipv6 :: mug:error()}).

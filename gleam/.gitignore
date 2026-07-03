@@ -1,2 +1,7 @@
 *.ez
 erl_crash.dump
+
+build/packages/
+build/lsp/
+build/*.lock
+build/fingerprint
