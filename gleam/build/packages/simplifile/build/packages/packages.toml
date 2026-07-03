@@ -1,4 +1,0 @@
-[packages]
-gleam_stdlib = "1.0.3"
-filepath = "1.1.2"
-gleeunit = "1.11.0"

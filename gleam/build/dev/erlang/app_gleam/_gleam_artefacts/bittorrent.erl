@@ -7,23 +7,23 @@
 -type cmd_error() :: {unknown_command, binary()} |
     invalid_arguments |
     {insufficient_arguments, binary()} |
+    {invalid_piece_index, integer()} |
     {app_start_error, start_error()} |
     {file_error, simplifile:file_error()} |
     {decode_error, bencode:decode_error()} |
-    {torrent_error, torrent:torrent_error()} |
     {tracker_error, tracker:tracker_error()} |
-    {peer_error, peer_protocol:peer_error()}.
+    {peer_error, peer_protocol:protocol_error()}.
 
 -type application() :: inets.
 
 -type start_error() :: {start_error, binary()}.
 
--file("src/bittorrent.gleam", 156).
+-file("src/bittorrent.gleam", 227).
 -spec stop(integer()) -> nil.
 stop(Code) ->
     init:stop(Code).
 
--file("src/bittorrent.gleam", 140).
+-file("src/bittorrent.gleam", 211).
 -spec describe_cmd_error(cmd_error()) -> binary().
 describe_cmd_error(Error) ->
     case Error of
@@ -37,6 +37,10 @@ describe_cmd_error(Error) ->
             <<<<"Insufficient arguments for `"/utf8, Command@1/binary>>/binary,
                 "`"/utf8>>;
 
+        {invalid_piece_index, Index} ->
+            <<"Invalid piece index: "/utf8,
+                (erlang:integer_to_binary(Index))/binary>>;
+
         {app_start_error, {start_error, Reason}} ->
             Reason;
 
@@ -46,17 +50,14 @@ describe_cmd_error(Error) ->
         {decode_error, Err@1} ->
             bencode:describe_error(Err@1);
 
-        {torrent_error, Err@2} ->
-            torrent:describe_error(Err@2);
+        {tracker_error, Err@2} ->
+            tracker:describe_error(Err@2);
 
-        {tracker_error, Err@3} ->
-            tracker:describe_error(Err@3);
-
-        {peer_error, Err@4} ->
-            peer_protocol:describe_error(Err@4)
+        {peer_error, Err@3} ->
+            peer_protocol:describe_error(Err@3)
     end.
 
--file("src/bittorrent.gleam", 128).
+-file("src/bittorrent.gleam", 199).
 -spec load_peer_id() -> {ok, bitstring()} | {error, simplifile:file_error()}.
 load_peer_id() ->
     case simplifile_erl:read_bits(<<".peer_id"/utf8>>) of
@@ -71,7 +72,159 @@ load_peer_id() ->
             )
     end.
 
--file("src/bittorrent.gleam", 106).
+-file("src/bittorrent.gleam", 157).
+-spec cmd_download_piece(binary(), binary(), binary()) -> {ok, nil} |
+    {error, cmd_error()}.
+cmd_download_piece(Download_path, Torrent_file, Piece_index_str) ->
+    gleam@result:'try'(
+        begin
+            _pipe = gleam_stdlib:parse_int(Piece_index_str),
+            gleam@result:replace_error(_pipe, invalid_arguments)
+        end,
+        fun(Piece_index) ->
+            gleam@result:'try'(
+                begin
+                    _pipe@1 = bittorrent_ffi:start(inets),
+                    gleam@result:map_error(
+                        _pipe@1,
+                        fun(Field@0) -> {app_start_error, Field@0} end
+                    )
+                end,
+                fun(_) ->
+                    gleam@result:'try'(
+                        begin
+                            _pipe@2 = load_peer_id(),
+                            gleam@result:map_error(
+                                _pipe@2,
+                                fun(Field@0) -> {file_error, Field@0} end
+                            )
+                        end,
+                        fun(Peer_id) ->
+                            gleam@result:'try'(
+                                begin
+                                    _pipe@3 = simplifile_erl:read_bits(
+                                        Torrent_file
+                                    ),
+                                    gleam@result:map_error(
+                                        _pipe@3,
+                                        fun(Field@0) -> {file_error, Field@0} end
+                                    )
+                                end,
+                                fun(Bits) ->
+                                    gleam@result:'try'(
+                                        begin
+                                            _pipe@4 = bencode:decode(Bits),
+                                            gleam@result:map_error(
+                                                _pipe@4,
+                                                fun(Field@0) -> {decode_error, Field@0} end
+                                            )
+                                        end,
+                                        fun(Data) ->
+                                            gleam@result:'try'(
+                                                begin
+                                                    _pipe@5 = bencode:parse_torrent(
+                                                        Data
+                                                    ),
+                                                    gleam@result:map_error(
+                                                        _pipe@5,
+                                                        fun(Field@0) -> {decode_error, Field@0} end
+                                                    )
+                                                end,
+                                                fun(Torrent) ->
+                                                    gleam@result:'try'(
+                                                        begin
+                                                            _pipe@6 = tracker:get_peers(
+                                                                Torrent,
+                                                                Peer_id
+                                                            ),
+                                                            gleam@result:map_error(
+                                                                _pipe@6,
+                                                                fun(Field@0) -> {tracker_error, Field@0} end
+                                                            )
+                                                        end,
+                                                        fun(Peers) ->
+                                                            Endpoint@1 = case Peers of
+                                                                [Endpoint | _] -> Endpoint;
+                                                                _assert_fail ->
+                                                                    erlang:error(
+                                                                            #{gleam_error => let_assert,
+                                                                                message => <<"Pattern match failed, no pattern matched the value."/utf8>>,
+                                                                                file => <<?FILEPATH/utf8>>,
+                                                                                module => <<"bittorrent"/utf8>>,
+                                                                                function => <<"cmd_download_piece"/utf8>>,
+                                                                                line => 176,
+                                                                                value => _assert_fail,
+                                                                                start => 4821,
+                                                                                'end' => 4854,
+                                                                                pattern_start => 4832,
+                                                                                pattern_end => 4846}
+                                                                        )
+                                                            end,
+                                                            gleam@result:'try'(
+                                                                begin
+                                                                    _pipe@7 = erlang:element(
+                                                                        6,
+                                                                        Torrent
+                                                                    ),
+                                                                    _pipe@8 = gleam@list:drop(
+                                                                        _pipe@7,
+                                                                        Piece_index
+                                                                    ),
+                                                                    _pipe@9 = gleam@list:first(
+                                                                        _pipe@8
+                                                                    ),
+                                                                    gleam@result:replace_error(
+                                                                        _pipe@9,
+                                                                        {invalid_piece_index,
+                                                                            Piece_index}
+                                                                    )
+                                                                end,
+                                                                fun(Piece_hash) ->
+                                                                    gleam@result:'try'(
+                                                                        begin
+                                                                            _pipe@10 = peer_protocol:one_piece(
+                                                                                Torrent,
+                                                                                Endpoint@1,
+                                                                                Piece_index,
+                                                                                Piece_hash,
+                                                                                Peer_id
+                                                                            ),
+                                                                            gleam@result:map_error(
+                                                                                _pipe@10,
+                                                                                fun(Field@0) -> {peer_error, Field@0} end
+                                                                            )
+                                                                        end,
+                                                                        fun(
+                                                                            Piece
+                                                                        ) ->
+                                                                            _pipe@11 = simplifile_erl:write_bits(
+                                                                                Download_path,
+                                                                                Piece
+                                                                            ),
+                                                                            gleam@result:map_error(
+                                                                                _pipe@11,
+                                                                                fun(Field@0) -> {file_error, Field@0} end
+                                                                            )
+                                                                        end
+                                                                    )
+                                                                end
+                                                            )
+                                                        end
+                                                    )
+                                                end
+                                            )
+                                        end
+                                    )
+                                end
+                            )
+                        end
+                    )
+                end
+            )
+        end
+    ).
+
+-file("src/bittorrent.gleam", 134).
 -spec cmd_handshake(binary(), binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_handshake(Filename, Endpoint) ->
     gleam@result:'try'(
@@ -112,30 +265,43 @@ cmd_handshake(Filename, Endpoint) ->
                                 fun(Data) ->
                                     gleam@result:'try'(
                                         begin
-                                            _pipe@4 = peer_protocol:handshake(
-                                                Endpoint,
-                                                Data,
-                                                Peer_id
+                                            _pipe@4 = bencode:parse_torrent(
+                                                Data
                                             ),
                                             gleam@result:map_error(
                                                 _pipe@4,
-                                                fun(Field@0) -> {peer_error, Field@0} end
+                                                fun(Field@0) -> {decode_error, Field@0} end
                                             )
                                         end,
-                                        fun(Peer_peer_id) ->
-                                            gleam_stdlib:println(
-                                                <<"Peer ID: "/utf8,
-                                                    (begin
-                                                        _pipe@5 = Peer_peer_id,
-                                                        _pipe@6 = gleam_stdlib:base16_encode(
-                                                            _pipe@5
-                                                        ),
-                                                        string:lowercase(
-                                                            _pipe@6
-                                                        )
-                                                    end)/binary>>
-                                            ),
-                                            {ok, nil}
+                                        fun(Torrent) ->
+                                            gleam@result:'try'(
+                                                begin
+                                                    _pipe@5 = peer_protocol:handshake(
+                                                        Endpoint,
+                                                        Torrent,
+                                                        Peer_id
+                                                    ),
+                                                    gleam@result:map_error(
+                                                        _pipe@5,
+                                                        fun(Field@0) -> {peer_error, Field@0} end
+                                                    )
+                                                end,
+                                                fun(Peer_peer_id) ->
+                                                    gleam_stdlib:println(
+                                                        <<"Peer ID: "/utf8,
+                                                            (begin
+                                                                _pipe@6 = Peer_peer_id,
+                                                                _pipe@7 = gleam_stdlib:base16_encode(
+                                                                    _pipe@6
+                                                                ),
+                                                                string:lowercase(
+                                                                    _pipe@7
+                                                                )
+                                                            end)/binary>>
+                                                    ),
+                                                    {ok, nil}
+                                                end
+                                            )
                                         end
                                     )
                                 end
@@ -147,7 +313,7 @@ cmd_handshake(Filename, Endpoint) ->
         end
     ).
 
--file("src/bittorrent.gleam", 92).
+-file("src/bittorrent.gleam", 117).
 -spec cmd_peers(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_peers(Filename) ->
     gleam@result:'try'(
@@ -188,23 +354,36 @@ cmd_peers(Filename) ->
                                 fun(Data) ->
                                     gleam@result:'try'(
                                         begin
-                                            _pipe@4 = tracker:get_peers(
-                                                Data,
-                                                Peer_id
+                                            _pipe@4 = bencode:parse_torrent(
+                                                Data
                                             ),
                                             gleam@result:map_error(
                                                 _pipe@4,
-                                                fun(Field@0) -> {tracker_error, Field@0} end
+                                                fun(Field@0) -> {decode_error, Field@0} end
                                             )
                                         end,
-                                        fun(Peers) ->
-                                            gleam_stdlib:println(
-                                                gleam@string:join(
-                                                    Peers,
-                                                    <<"\n"/utf8>>
-                                                )
-                                            ),
-                                            {ok, nil}
+                                        fun(Torrent) ->
+                                            gleam@result:'try'(
+                                                begin
+                                                    _pipe@5 = tracker:get_peers(
+                                                        Torrent,
+                                                        Peer_id
+                                                    ),
+                                                    gleam@result:map_error(
+                                                        _pipe@5,
+                                                        fun(Field@0) -> {tracker_error, Field@0} end
+                                                    )
+                                                end,
+                                                fun(Peers) ->
+                                                    gleam_stdlib:println(
+                                                        gleam@string:join(
+                                                            Peers,
+                                                            <<"\n"/utf8>>
+                                                        )
+                                                    ),
+                                                    {ok, nil}
+                                                end
+                                            )
                                         end
                                     )
                                 end
@@ -216,7 +395,7 @@ cmd_peers(Filename) ->
         end
     ).
 
--file("src/bittorrent.gleam", 84).
+-file("src/bittorrent.gleam", 91).
 -spec cmd_info(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_info(Filename) ->
     gleam@result:'try'(
@@ -239,20 +418,61 @@ cmd_info(Filename) ->
                 fun(Data) ->
                     gleam@result:'try'(
                         begin
-                            _pipe@2 = torrent:print_info(Data),
+                            _pipe@2 = bencode:parse_torrent(Data),
                             gleam@result:map_error(
                                 _pipe@2,
-                                fun(Field@0) -> {torrent_error, Field@0} end
+                                fun(Field@0) -> {decode_error, Field@0} end
                             )
                         end,
-                        fun(_) -> {ok, nil} end
+                        fun(Torrent) ->
+                            gleam_stdlib:println(
+                                <<"Tracker URL: "/utf8,
+                                    (erlang:element(3, Torrent))/binary>>
+                            ),
+                            gleam_stdlib:println(
+                                <<"Length: "/utf8,
+                                    (erlang:integer_to_binary(
+                                        erlang:element(4, Torrent)
+                                    ))/binary>>
+                            ),
+                            Encoded = begin
+                                _pipe@3 = erlang:element(7, Torrent),
+                                _pipe@4 = gleam_stdlib:base16_encode(_pipe@3),
+                                string:lowercase(_pipe@4)
+                            end,
+                            gleam_stdlib:println(
+                                <<"Info Hash: "/utf8, Encoded/binary>>
+                            ),
+                            gleam_stdlib:println(
+                                <<"Piece Length: "/utf8,
+                                    (erlang:integer_to_binary(
+                                        erlang:element(5, Torrent)
+                                    ))/binary>>
+                            ),
+                            Hashes = begin
+                                _pipe@5 = erlang:element(6, Torrent),
+                                _pipe@6 = gleam@list:map(
+                                    _pipe@5,
+                                    fun gleam_stdlib:base16_encode/1
+                                ),
+                                _pipe@7 = gleam@list:map(
+                                    _pipe@6,
+                                    fun string:lowercase/1
+                                ),
+                                gleam@string:join(_pipe@7, <<"\n"/utf8>>)
+                            end,
+                            gleam_stdlib:println(
+                                <<"Piece Hashes: \n"/utf8, Hashes/binary>>
+                            ),
+                            {ok, nil}
+                        end
                     )
                 end
             )
         end
     ).
 
--file("src/bittorrent.gleam", 73).
+-file("src/bittorrent.gleam", 80).
 -spec cmd_decode(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_decode(Encode_str) ->
     gleam@result:'try'(
@@ -292,8 +512,8 @@ execute_cmd(Args) ->
 
         [<<"info"/utf8>> | Rest@1] ->
             case Rest@1 of
-                [Filename | _] ->
-                    cmd_info(Filename);
+                [Torrent_file | _] ->
+                    cmd_info(Torrent_file);
 
                 [] ->
                     {error, {insufficient_arguments, <<"info"/utf8>>}}
@@ -301,8 +521,8 @@ execute_cmd(Args) ->
 
         [<<"peers"/utf8>> | Rest@2] ->
             case Rest@2 of
-                [Filename@1 | _] ->
-                    cmd_peers(Filename@1);
+                [Torrent_file@1 | _] ->
+                    cmd_peers(Torrent_file@1);
 
                 [] ->
                     {error, {insufficient_arguments, <<"peers"/utf8>>}}
@@ -310,11 +530,24 @@ execute_cmd(Args) ->
 
         [<<"handshake"/utf8>> | Rest@3] ->
             case Rest@3 of
-                [Filename@2, Endpoint] ->
-                    cmd_handshake(Filename@2, Endpoint);
+                [Torrent_file@2, Endpoint] ->
+                    cmd_handshake(Torrent_file@2, Endpoint);
 
                 _ ->
                     {error, {insufficient_arguments, <<"handshake"/utf8>>}}
+            end;
+
+        [<<"download_piece"/utf8>> | Rest@4] ->
+            case Rest@4 of
+                [<<"-o"/utf8>>, Download_path, Torrent_file@3, Piece_index] ->
+                    cmd_download_piece(
+                        Download_path,
+                        Torrent_file@3,
+                        Piece_index
+                    );
+
+                _ ->
+                    {error, {insufficient_arguments, <<"download_piece"/utf8>>}}
             end;
 
         [Command | _] ->

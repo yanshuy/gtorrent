@@ -1,0 +1,1 @@
+-record(peer_state, {choked :: boolean(), interested :: boolean()}).

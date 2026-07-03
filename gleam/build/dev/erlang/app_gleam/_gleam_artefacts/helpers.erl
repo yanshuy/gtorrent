@@ -87,7 +87,7 @@ take_until(Bits, Delimiter) ->
             {error, nil}
     end.
 
--file("src/helpers.gleam", 79).
+-file("src/helpers.gleam", 80).
 -spec ascii(integer()) -> binary().
 ascii(Byte) ->
     String@1 = case begin
@@ -101,16 +101,16 @@ ascii(Byte) ->
                         file => <<?FILEPATH/utf8>>,
                         module => <<"helpers"/utf8>>,
                         function => <<"ascii"/utf8>>,
-                        line => 80,
+                        line => 81,
                         value => _assert_fail,
-                        start => 1881,
-                        'end' => 1936,
-                        pattern_start => 1892,
-                        pattern_end => 1902})
+                        start => 1895,
+                        'end' => 1950,
+                        pattern_start => 1906,
+                        pattern_end => 1916})
     end,
     String@1.
 
--file("src/helpers.gleam", 69).
+-file("src/helpers.gleam", 70).
 -spec is_unreserved(integer()) -> boolean().
 is_unreserved(Byte) ->
     case Byte of
@@ -139,7 +139,7 @@ is_unreserved(Byte) ->
             false
     end.
 
--file("src/helpers.gleam", 52).
+-file("src/helpers.gleam", 53).
 -spec percent_encode_loop(bitstring(), list(binary())) -> binary().
 percent_encode_loop(Bits, Acc) ->
     case Bits of
@@ -164,10 +164,10 @@ percent_encode_loop(Bits, Acc) ->
                     file => <<?FILEPATH/utf8>>,
                     module => <<"helpers"/utf8>>,
                     function => <<"percent_encode_loop"/utf8>>,
-                    line => 65})
+                    line => 66})
     end.
 
--file("src/helpers.gleam", 48).
+-file("src/helpers.gleam", 49).
 -spec percent_encode(bitstring()) -> binary().
 percent_encode(Bits) ->
     percent_encode_loop(Bits, []).

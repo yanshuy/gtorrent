@@ -45,6 +45,7 @@ pub fn find_byte_index_loop(
   }
 }
 
+// ai written
 pub fn percent_encode(bits: BitArray) -> String {
   percent_encode_loop(bits, [])
 }

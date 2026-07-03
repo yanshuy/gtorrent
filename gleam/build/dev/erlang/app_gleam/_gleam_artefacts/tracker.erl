@@ -4,13 +4,12 @@
 -export([split_peers/2, get_peers/2, describe_error/1]).
 -export_type([tracker_error/0]).
 
--type tracker_error() :: {http_error, gleam@httpc:http_error()} |
-    {torrent_error, torrent:torrent_error()} |
+-type tracker_error() :: invalid_url |
+    {http_error, gleam@httpc:http_error()} |
     {decode_error, bencode:decode_error()} |
-    invalid_url |
     {invalid_response, binary()}.
 
--file("src/tracker.gleam", 77).
+-file("src/tracker.gleam", 62).
 -spec split_peers(bitstring(), list(binary())) -> {ok, list(binary())} |
     {error, nil}.
 split_peers(Peers, Acc) ->
@@ -27,12 +26,12 @@ split_peers(Peers, Acc) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"tracker"/utf8>>,
                                 function => <<"split_peers"/utf8>>,
-                                line => 84,
+                                line => 69,
                                 value => _assert_fail,
-                                start => 2281,
-                                'end' => 2343,
-                                pattern_start => 2292,
-                                pattern_end => 2336})
+                                start => 1776,
+                                'end' => 1838,
+                                pattern_start => 1787,
+                                pattern_end => 1831})
             end,
             {One@1, Two@1, Three@1, Four@1} = case Ip4@1 of
                 <<One:8/unsigned,
@@ -45,12 +44,12 @@ split_peers(Peers, Acc) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"tracker"/utf8>>,
                                 function => <<"split_peers"/utf8>>,
-                                line => 86,
+                                line => 71,
                                 value => _assert_fail@1,
-                                start => 2351,
-                                'end' => 2502,
-                                pattern_start => 2362,
-                                pattern_end => 2496})
+                                start => 1846,
+                                'end' => 1997,
+                                pattern_start => 1857,
+                                pattern_end => 1991})
             end,
             Ip_addr = <<<<<<<<<<<<(erlang:integer_to_binary(One@1))/binary,
                                     "."/utf8>>/binary,
@@ -67,155 +66,106 @@ split_peers(Peers, Acc) ->
             {error, nil}
     end.
 
--file("src/tracker.gleam", 46).
--spec construct_query_string(
-    gleam@dict:dict(binary(), bencode:bencode()),
-    bitstring()
-) -> {ok, binary()} | {error, tracker_error()}.
+-file("src/tracker.gleam", 40).
+-spec construct_query_string(bencode:torrent(), bitstring()) -> {ok, binary()} |
+    {error, tracker_error()}.
 construct_query_string(Torrent, Peer_id) ->
-    gleam@result:'try'(
+    Encoded = begin
+        _pipe = erlang:element(7, Torrent),
+        helpers:percent_encode(_pipe)
+    end,
+    Peer_id@1 = begin
+        _pipe@1 = Peer_id,
+        helpers:percent_encode(_pipe@1)
+    end,
+    Left = begin
+        _pipe@2 = erlang:element(4, Torrent),
+        erlang:integer_to_binary(_pipe@2)
+    end,
+    {ok,
         begin
-            _pipe = torrent:get_entries(Torrent, <<"info"/utf8>>),
-            gleam@result:map_error(
-                _pipe,
-                fun(Field@0) -> {torrent_error, Field@0} end
-            )
-        end,
-        fun(Info_entries) ->
-            Info_hash = begin
-                _pipe@1 = torrent:digest_entries(Info_entries),
-                helpers:percent_encode(_pipe@1)
-            end,
-            Peer_id@1 = begin
-                _pipe@2 = Peer_id,
-                helpers:percent_encode(_pipe@2)
-            end,
-            Info_dict = maps:from_list(Info_entries),
-            gleam@result:'try'(
-                begin
-                    _pipe@3 = torrent:get_int(Info_dict, <<"length"/utf8>>),
-                    gleam@result:map_error(
-                        _pipe@3,
-                        fun(Field@0) -> {torrent_error, Field@0} end
-                    )
-                end,
-                fun(Length) ->
-                    Left = Length,
-                    {ok,
-                        begin
-                            _pipe@4 = [<<"info_hash="/utf8, Info_hash/binary>>,
-                                <<"peer_id="/utf8, Peer_id@1/binary>>,
-                                <<"port=6881"/utf8>>,
-                                <<"uploaded=0"/utf8>>,
-                                <<"downloaded=0"/utf8>>,
-                                <<"left="/utf8,
-                                    (erlang:integer_to_binary(Left))/binary>>,
-                                <<"compact=1"/utf8>>],
-                            gleam@string:join(_pipe@4, <<"&"/utf8>>)
-                        end}
-                end
-            )
-        end
-    ).
+            _pipe@3 = [<<"info_hash="/utf8, Encoded/binary>>,
+                <<"peer_id="/utf8, Peer_id@1/binary>>,
+                <<"port=6881"/utf8>>,
+                <<"uploaded=0"/utf8>>,
+                <<"downloaded=0"/utf8>>,
+                <<"left="/utf8, Left/binary>>,
+                <<"compact=1"/utf8>>],
+            gleam@string:join(_pipe@3, <<"&"/utf8>>)
+        end}.
 
--file("src/tracker.gleam", 21).
--spec get_peers(bencode:bencode(), bitstring()) -> {ok, list(binary())} |
+-file("src/tracker.gleam", 18).
+-spec get_peers(bencode:torrent(), bitstring()) -> {ok, list(binary())} |
     {error, tracker_error()}.
 get_peers(Torrent, Peer_id) ->
     gleam@result:'try'(
         begin
-            _pipe = torrent:dict(Torrent),
-            gleam@result:map_error(
-                _pipe,
-                fun(Field@0) -> {torrent_error, Field@0} end
-            )
+            _pipe = gleam@http@request:to(erlang:element(3, Torrent)),
+            gleam@result:replace_error(_pipe, invalid_url)
         end,
-        fun(Dict) ->
+        fun(Req) ->
+            Req@1 = gleam@http@request:set_body(Req, <<>>),
             gleam@result:'try'(
-                begin
-                    _pipe@1 = torrent:get_string(Dict, <<"announce"/utf8>>),
-                    gleam@result:map_error(
-                        _pipe@1,
-                        fun(Field@0) -> {torrent_error, Field@0} end
-                    )
-                end,
-                fun(Tracker_url) ->
+                construct_query_string(Torrent, Peer_id),
+                fun(Query_string) ->
+                    Req@2 = {request,
+                        erlang:element(2, Req@1),
+                        erlang:element(3, Req@1),
+                        erlang:element(4, Req@1),
+                        erlang:element(5, Req@1),
+                        erlang:element(6, Req@1),
+                        erlang:element(7, Req@1),
+                        erlang:element(8, Req@1),
+                        {some, Query_string}},
                     gleam@result:'try'(
                         begin
-                            _pipe@2 = gleam@http@request:to(Tracker_url),
-                            gleam@result:replace_error(_pipe@2, invalid_url)
+                            _pipe@1 = gleam@httpc:send_bits(Req@2),
+                            gleam@result:map_error(
+                                _pipe@1,
+                                fun(Field@0) -> {http_error, Field@0} end
+                            )
                         end,
-                        fun(Req) ->
-                            Req@1 = gleam@http@request:set_body(Req, <<>>),
+                        fun(Resp) ->
                             gleam@result:'try'(
-                                construct_query_string(Dict, Peer_id),
-                                fun(Query_string) ->
-                                    Req@2 = {request,
-                                        erlang:element(2, Req@1),
-                                        erlang:element(3, Req@1),
-                                        erlang:element(4, Req@1),
-                                        erlang:element(5, Req@1),
-                                        erlang:element(6, Req@1),
-                                        erlang:element(7, Req@1),
-                                        erlang:element(8, Req@1),
-                                        {some, Query_string}},
+                                begin
+                                    _pipe@2 = bencode:decode(
+                                        erlang:element(4, Resp)
+                                    ),
+                                    gleam@result:map_error(
+                                        _pipe@2,
+                                        fun(Field@0) -> {decode_error, Field@0} end
+                                    )
+                                end,
+                                fun(Resp_bencode) ->
                                     gleam@result:'try'(
                                         begin
-                                            _pipe@3 = gleam@httpc:send_bits(
-                                                Req@2
-                                            ),
+                                            _pipe@3 = bencode:dict(Resp_bencode),
                                             gleam@result:map_error(
                                                 _pipe@3,
-                                                fun(Field@0) -> {http_error, Field@0} end
+                                                fun(Field@0) -> {decode_error, Field@0} end
                                             )
                                         end,
-                                        fun(Resp) ->
+                                        fun(Dict) ->
                                             gleam@result:'try'(
                                                 begin
-                                                    _pipe@4 = bencode:decode(
-                                                        erlang:element(4, Resp)
+                                                    _pipe@4 = bencode:get_string_bits(
+                                                        Dict,
+                                                        <<"peers"/utf8>>
                                                     ),
                                                     gleam@result:map_error(
                                                         _pipe@4,
                                                         fun(Field@0) -> {decode_error, Field@0} end
                                                     )
                                                 end,
-                                                fun(Resp_bencode) ->
-                                                    gleam@result:'try'(
-                                                        begin
-                                                            _pipe@5 = torrent:dict(
-                                                                Resp_bencode
-                                                            ),
-                                                            gleam@result:map_error(
-                                                                _pipe@5,
-                                                                fun(Field@0) -> {torrent_error, Field@0} end
-                                                            )
-                                                        end,
-                                                        fun(Dict@1) ->
-                                                            gleam@result:'try'(
-                                                                begin
-                                                                    _pipe@6 = torrent:get_string_bits(
-                                                                        Dict@1,
-                                                                        <<"peers"/utf8>>
-                                                                    ),
-                                                                    gleam@result:map_error(
-                                                                        _pipe@6,
-                                                                        fun(Field@0) -> {torrent_error, Field@0} end
-                                                                    )
-                                                                end,
-                                                                fun(Peers) ->
-                                                                    _pipe@7 = split_peers(
-                                                                        Peers,
-                                                                        []
-                                                                    ),
-                                                                    gleam@result:replace_error(
-                                                                        _pipe@7,
-                                                                        {invalid_response,
-                                                                            <<"malformed peers list"/utf8>>}
-                                                                    )
-                                                                end
-                                                            )
-                                                        end
+                                                fun(Peers) ->
+                                                    _pipe@5 = split_peers(
+                                                        Peers,
+                                                        []
+                                                    ),
+                                                    gleam@result:replace_error(
+                                                        _pipe@5,
+                                                        {invalid_response,
+                                                            <<"malformed peers list"/utf8>>}
                                                     )
                                                 end
                                             )
@@ -230,7 +180,7 @@ get_peers(Torrent, Peer_id) ->
         end
     ).
 
--file("src/tracker.gleam", 134).
+-file("src/tracker.gleam", 114).
 -spec describe_connect_error(gleam@httpc:connect_error()) -> binary().
 describe_connect_error(Error) ->
     case Error of
@@ -243,10 +193,13 @@ describe_connect_error(Error) ->
                 ")"/utf8>>
     end.
 
--file("src/tracker.gleam", 108).
+-file("src/tracker.gleam", 93).
 -spec describe_error(tracker_error()) -> binary().
 describe_error(Error) ->
     case Error of
+        invalid_url ->
+            <<"Invalid tracker URL"/utf8>>;
+
         {http_error, Err} ->
             case Err of
                 invalid_utf8_response ->
@@ -255,7 +208,7 @@ describe_error(Error) ->
                             file => <<?FILEPATH/utf8>>,
                             module => <<"tracker"/utf8>>,
                             function => <<"describe_error"/utf8>>,
-                            line => 112});
+                            line => 98});
 
                 {failed_to_connect, Ip4, Ip6} ->
                     <<<<<<<<"Failed to connect to tracker.\n"/utf8,
@@ -268,16 +221,9 @@ describe_error(Error) ->
                     <<"Tracker request timed out"/utf8>>
             end;
 
-        {torrent_error, Err@1} ->
-            <<"Response Torrent: "/utf8,
-                (torrent:describe_error(Err@1))/binary>>;
-
-        {decode_error, Err@2} ->
-            <<"Decoding: "/utf8, (bencode:describe_error(Err@2))/binary>>;
+        {decode_error, Err@1} ->
+            <<"Decoding: "/utf8, (bencode:describe_error(Err@1))/binary>>;
 
         {invalid_response, Msg} ->
-            Msg;
-
-        invalid_url ->
-            <<"Invalid tracker URL"/utf8>>
+            Msg
     end.

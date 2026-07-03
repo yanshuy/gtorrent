@@ -1,8 +1,12 @@
 import gleam/bit_array
+import gleam/crypto
+import gleam/dict
 import gleam/int
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/result.{try}
+import gleam/string
 import helpers
 
 pub type Bencode {
@@ -18,8 +22,10 @@ pub type DecodeError {
   InvalidStringLength
   InvalidDictionaryKey
   InvalidUtf8
-  NoColon
   InvalidPrefix(Int)
+  MissingKey(String)
+  InvalidTorrent(String)
+  NoColon
 }
 
 pub fn decode(encoded_value: BitArray) -> Result(Bencode, DecodeError) {
@@ -183,6 +189,132 @@ pub fn to_json(value: Bencode) -> json.Json {
   }
 }
 
+pub type Torrent {
+  Torrent(
+    name: String,
+    announce: String,
+    length: Int,
+    piece_length: Int,
+    pieces: List(BitArray),
+    info_hash: BitArray,
+  )
+}
+
+pub fn parse_torrent(torrent: Bencode) -> Result(Torrent, DecodeError) {
+  use dict <- try(dict(torrent))
+  let name = get_string(dict, "name") |> result.unwrap("Unknown")
+  use tracker <- try(get_string(dict, "announce"))
+
+  use info_entries <- try(get_entries(dict, "info"))
+  let info_dict = dict.from_list(info_entries)
+
+  use length <- try(get_int(info_dict, "length"))
+  use piece_length <- try(get_int(info_dict, "piece length"))
+  use pieces <- try(get_string_bits(info_dict, "pieces"))
+
+  let piece_hashes = split_piece_hashes(pieces, [])
+
+  Ok(Torrent(
+    name: name,
+    announce: tracker,
+    length: length,
+    piece_length: piece_length,
+    pieces: piece_hashes,
+    info_hash: digest_entries(info_entries),
+  ))
+}
+
+pub fn dict(
+  meta_info: Bencode,
+) -> Result(dict.Dict(String, Bencode), DecodeError) {
+  case meta_info {
+    BDict(entries) -> {
+      let dict = dict.from_list(entries)
+      Ok(dict)
+    }
+    _ -> Error(InvalidTorrent("Not valid"))
+  }
+}
+
+pub fn digest_entries(info_entries: List(#(String, Bencode))) {
+  let bits = BDict(info_entries) |> encode
+  crypto.hash(crypto.Sha1, bits)
+}
+
+pub fn split_piece_hashes(
+  bits: BitArray,
+  acc: List(BitArray),
+) -> List(BitArray) {
+  case bits {
+    <<>> -> list.reverse(acc)
+
+    <<first:bytes-size(20), rest:bits>> ->
+      split_piece_hashes(rest, [first, ..acc])
+
+    _ -> acc
+  }
+}
+
+pub fn get_value(
+  torrent: dict.Dict(String, Bencode),
+  key: String,
+) -> Result(Bencode, DecodeError) {
+  dict.get(torrent, key)
+  |> result.replace_error(MissingKey(key))
+}
+
+pub fn get_string(
+  torrent: dict.Dict(String, Bencode),
+  key: String,
+) -> Result(String, DecodeError) {
+  use value <- try(get_value(torrent, key))
+
+  let error = InvalidTorrent("Expected utf8 string for key: " <> key)
+
+  case value {
+    BString(bits) -> bit_array.to_string(bits) |> result.replace_error(error)
+
+    _ -> Error(error)
+  }
+}
+
+pub fn get_string_bits(
+  torrent: dict.Dict(String, Bencode),
+  key: String,
+) -> Result(BitArray, DecodeError) {
+  use value <- try(get_value(torrent, key))
+
+  let error = InvalidTorrent("Expected string for key: " <> key)
+  case value {
+    BString(bits) -> Ok(bits)
+    _ -> Error(error)
+  }
+}
+
+pub fn get_int(
+  torrent: dict.Dict(String, Bencode),
+  key: String,
+) -> Result(Int, DecodeError) {
+  use value <- try(get_value(torrent, key))
+
+  case value {
+    BInteger(integer) -> Ok(integer)
+    _ -> Error(InvalidTorrent("Expected integer for key: " <> key))
+  }
+}
+
+pub fn get_entries(
+  torrent: dict.Dict(String, Bencode),
+  key: String,
+) -> Result(List(#(String, Bencode)), DecodeError) {
+  use value <- try(get_value(torrent, key))
+
+  case value {
+    BDict(entries) -> Ok(entries)
+    _ -> Error(InvalidTorrent("Expected dictionary for key: " <> key))
+  }
+}
+
 pub fn describe_error(error: DecodeError) -> String {
   case error {
     UnexpectedEof -> "Unexpected end of input"
@@ -192,5 +324,7 @@ pub fn describe_error(error: DecodeError) -> String {
     InvalidPrefix(byte) -> "Invalid prefix: " <> int.to_string(byte)
     NoColon -> "The ':' character is not found in the binary"
     InvalidDictionaryKey -> "Invalid dict key"
+    MissingKey(key) -> "Missing Key: " <> key
+    InvalidTorrent(err) -> err
   }
 }

@@ -1,1 +1,0 @@
--record(already_started, {app :: bittorrent:application()}).

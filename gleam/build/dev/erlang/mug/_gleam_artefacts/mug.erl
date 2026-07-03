@@ -542,7 +542,7 @@ receive_next_packet_as_message(Socket) ->
     nil.
 
 -file("src/mug.gleam", 541).
--spec map_tcp_message(fun((tcp_message()) -> ACU)) -> fun((gleam@dynamic:dynamic_()) -> ACU).
+-spec map_tcp_message(fun((tcp_message()) -> FRM)) -> fun((gleam@dynamic:dynamic_()) -> FRM).
 map_tcp_message(Mapper) ->
     fun(Message) -> Mapper(mug_ffi:coerce_tcp_message(Message)) end.
 
@@ -555,9 +555,9 @@ map_tcp_message(Mapper) ->
     " from one socket then use one process per socket.\n"
 ).
 -spec select_tcp_messages(
-    gleam@erlang@process:selector(ACR),
-    fun((tcp_message()) -> ACR)
-) -> gleam@erlang@process:selector(ACR).
+    gleam@erlang@process:selector(FRJ),
+    fun((tcp_message()) -> FRJ)
+) -> gleam@erlang@process:selector(FRJ).
 select_tcp_messages(Selector, Mapper) ->
     Tcp = erlang:binary_to_atom(<<"tcp"/utf8>>),
     Closed = erlang:binary_to_atom(<<"tcp_closed"/utf8>>),
