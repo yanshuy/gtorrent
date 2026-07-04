@@ -9,7 +9,36 @@
     {decode_error, bencode:decode_error()} |
     {invalid_response, binary()}.
 
--file("src/tracker.gleam", 62).
+-file("src/tracker.gleam", 138).
+-spec parse_uncompact_peers(list(bencode:bencode()), list(binary())) -> {ok,
+        list(binary())} |
+    {error, nil}.
+parse_uncompact_peers(List, Acc) ->
+    case List of
+        [] ->
+            {ok, lists:reverse(Acc)};
+
+        [Head | Rest] ->
+            case Head of
+                {b_dict, Entries} ->
+                    Peer_dict = maps:from_list(Entries),
+                    case {bencode:get_string(Peer_dict, <<"ip"/utf8>>),
+                        bencode:get_int(Peer_dict, <<"port"/utf8>>)} of
+                        {{ok, Ip}, {ok, Port}} ->
+                            End_point = <<<<Ip/binary, ":"/utf8>>/binary,
+                                (erlang:integer_to_binary(Port))/binary>>,
+                            parse_uncompact_peers(Rest, [End_point | Acc]);
+
+                        {_, _} ->
+                            parse_uncompact_peers(Rest, Acc)
+                    end;
+
+                _ ->
+                    parse_uncompact_peers(Rest, Acc)
+            end
+    end.
+
+-file("src/tracker.gleam", 78).
 -spec split_peers(bitstring(), list(binary())) -> {ok, list(binary())} |
     {error, nil}.
 split_peers(Peers, Acc) ->
@@ -26,12 +55,12 @@ split_peers(Peers, Acc) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"tracker"/utf8>>,
                                 function => <<"split_peers"/utf8>>,
-                                line => 69,
+                                line => 85,
                                 value => _assert_fail,
-                                start => 1776,
-                                'end' => 1838,
-                                pattern_start => 1787,
-                                pattern_end => 1831})
+                                start => 2207,
+                                'end' => 2269,
+                                pattern_start => 2218,
+                                pattern_end => 2262})
             end,
             {One@1, Two@1, Three@1, Four@1} = case Ip4@1 of
                 <<One:8/unsigned,
@@ -44,12 +73,12 @@ split_peers(Peers, Acc) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"tracker"/utf8>>,
                                 function => <<"split_peers"/utf8>>,
-                                line => 71,
+                                line => 87,
                                 value => _assert_fail@1,
-                                start => 1846,
-                                'end' => 1997,
-                                pattern_start => 1857,
-                                pattern_end => 1991})
+                                start => 2277,
+                                'end' => 2428,
+                                pattern_start => 2288,
+                                pattern_end => 2422})
             end,
             Ip_addr = <<<<<<<<<<<<(erlang:integer_to_binary(One@1))/binary,
                                     "."/utf8>>/binary,
@@ -66,7 +95,32 @@ split_peers(Peers, Acc) ->
             {error, nil}
     end.
 
--file("src/tracker.gleam", 40).
+-file("src/tracker.gleam", 38).
+-spec decode_peers(bencode:bencode()) -> {ok, list(binary())} |
+    {error, tracker_error()}.
+decode_peers(Peers_value) ->
+    case Peers_value of
+        {b_string, Peers} ->
+            _pipe = split_peers(Peers, []),
+            gleam@result:replace_error(
+                _pipe,
+                {invalid_response, <<"malformed compact peers string"/utf8>>}
+            );
+
+        {b_list, Peer_list} ->
+            _pipe@1 = parse_uncompact_peers(Peer_list, []),
+            gleam@result:replace_error(
+                _pipe@1,
+                {invalid_response, <<"malformed legacy peers list"/utf8>>}
+            );
+
+        _ ->
+            {error,
+                {invalid_response,
+                    <<"expected peers to be a string or a list"/utf8>>}}
+    end.
+
+-file("src/tracker.gleam", 56).
 -spec construct_query_string(bencode:torrent(), bitstring()) -> {ok, binary()} |
     {error, tracker_error()}.
 construct_query_string(Torrent, Peer_id) ->
@@ -94,7 +148,7 @@ construct_query_string(Torrent, Peer_id) ->
             gleam@string:join(_pipe@3, <<"&"/utf8>>)
         end}.
 
--file("src/tracker.gleam", 18).
+-file("src/tracker.gleam", 19).
 -spec get_peers(bencode:torrent(), bitstring()) -> {ok, list(binary())} |
     {error, tracker_error()}.
 get_peers(Torrent, Peer_id) ->
@@ -148,7 +202,7 @@ get_peers(Torrent, Peer_id) ->
                                         fun(Dict) ->
                                             gleam@result:'try'(
                                                 begin
-                                                    _pipe@4 = bencode:get_string_bits(
+                                                    _pipe@4 = bencode:get_value(
                                                         Dict,
                                                         <<"peers"/utf8>>
                                                     ),
@@ -158,15 +212,7 @@ get_peers(Torrent, Peer_id) ->
                                                     )
                                                 end,
                                                 fun(Peers) ->
-                                                    _pipe@5 = split_peers(
-                                                        Peers,
-                                                        []
-                                                    ),
-                                                    gleam@result:replace_error(
-                                                        _pipe@5,
-                                                        {invalid_response,
-                                                            <<"malformed peers list"/utf8>>}
-                                                    )
+                                                    decode_peers(Peers)
                                                 end
                                             )
                                         end
@@ -180,7 +226,7 @@ get_peers(Torrent, Peer_id) ->
         end
     ).
 
--file("src/tracker.gleam", 114).
+-file("src/tracker.gleam", 130).
 -spec describe_connect_error(gleam@httpc:connect_error()) -> binary().
 describe_connect_error(Error) ->
     case Error of
@@ -193,7 +239,7 @@ describe_connect_error(Error) ->
                 ")"/utf8>>
     end.
 
--file("src/tracker.gleam", 93).
+-file("src/tracker.gleam", 109).
 -spec describe_error(tracker_error()) -> binary().
 describe_error(Error) ->
     case Error of
@@ -208,7 +254,7 @@ describe_error(Error) ->
                             file => <<?FILEPATH/utf8>>,
                             module => <<"tracker"/utf8>>,
                             function => <<"describe_error"/utf8>>,
-                            line => 98});
+                            line => 114});
 
                 {failed_to_connect, Ip4, Ip6} ->
                     <<<<<<<<"Failed to connect to tracker.\n"/utf8,

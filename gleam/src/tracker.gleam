@@ -1,4 +1,5 @@
 import bencode
+import gleam/dict
 import gleam/http/request
 import gleam/httpc
 import gleam/int
@@ -29,12 +30,27 @@ pub fn get_peers(
   use resp_bencode <- try(bencode.decode(resp.body) |> map_error(DecodeError))
 
   use dict <- try(bencode.dict(resp_bencode) |> map_error(DecodeError))
-  use peers <- try(
-    bencode.get_string_bits(dict, "peers") |> map_error(DecodeError),
-  )
+  use peers <- try(bencode.get_value(dict, "peers") |> map_error(DecodeError))
 
-  split_peers(peers, [])
-  |> replace_error(InvalidResponse("malformed peers list"))
+  decode_peers(peers)
+}
+
+fn decode_peers(
+  peers_value: bencode.Bencode,
+) -> Result(List(String), TrackerError) {
+  case peers_value {
+    bencode.BString(peers) -> {
+      split_peers(peers, [])
+      |> replace_error(InvalidResponse("malformed compact peers string"))
+    }
+
+    bencode.BList(peer_list) -> {
+      parse_uncompact_peers(peer_list, [])
+      |> replace_error(InvalidResponse("malformed legacy peers list"))
+    }
+
+    _ -> Error(InvalidResponse("expected peers to be a string or a list"))
+  }
 }
 
 fn construct_query_string(
@@ -116,5 +132,32 @@ fn describe_connect_error(error: httpc.ConnectError) {
     httpc.Posix(code) -> "POSIX error: " <> code
     httpc.TlsAlert(code, detail) ->
       "TLS alert: " <> code <> " (" <> detail <> ")"
+  }
+}
+
+fn parse_uncompact_peers(
+  list: List(bencode.Bencode),
+  acc: List(String),
+) -> Result(List(String), Nil) {
+  case list {
+    [] -> Ok(list.reverse(acc))
+    [head, ..rest] -> {
+      case head {
+        bencode.BDict(entries) -> {
+          let peer_dict = dict.from_list(entries)
+          case
+            bencode.get_string(peer_dict, "ip"),
+            bencode.get_int(peer_dict, "port")
+          {
+            Ok(ip), Ok(port) -> {
+              let end_point = ip <> ":" <> int.to_string(port)
+              parse_uncompact_peers(rest, [end_point, ..acc])
+            }
+            _, _ -> parse_uncompact_peers(rest, acc)
+          }
+        }
+        _ -> parse_uncompact_peers(rest, acc)
+      }
+    }
   }
 }

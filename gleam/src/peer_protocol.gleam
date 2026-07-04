@@ -2,6 +2,7 @@ import bencode
 import gleam/bit_array
 import gleam/bool
 import gleam/crypto
+import gleam/dict
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -9,17 +10,6 @@ import gleam/result.{map_error, replace_error, try}
 import gleam/string
 import mug.{ConnectionOptions}
 import simplifile
-
-pub type ProtocolError {
-  InvalidEndpoint
-  InvalidResponse
-  InfoHashMismatch
-  FileError(simplifile.FileError)
-  TCPError(mug.Error)
-  UnknownMessageId(Int)
-  UnexpectedMessage(Int)
-  ProtocolError(String)
-}
 
 pub type PeerMessage {
   Choke
@@ -29,26 +19,32 @@ pub type PeerMessage {
   Have
   BitField(BitArray)
   Request(piece_index: Int, begin: Int, length: Int)
-  Piece(piece_index: Int, begin: Int, block: BitArray)
+  PieceMessage(piece_index: Int, begin: Int, block: BitArray)
 }
 
-pub type PeerState {
-  PeerState(
-    endpoint: String,
-    download_path: String,
-    choked: Bool,
-    interested: Bool,
-    bit_field: Option(BitArray),
+pub type Piece {
+  Piece(
+    index: Int,
+    hash: BitArray,
+    length: Int,
+    blocks: List(BitArray),
+    remaining_requests: List(BlockRequest),
+    outstanding_requests: dict.Dict(Int, BlockRequest),
   )
 }
 
-pub type PieceDownload {
-  PieceDownload(
-    index: Int,
-    length: Int,
-    hash: BitArray,
-    offset: Int,
-    blocks: List(BitArray),
+pub type BlockRequest {
+  BlockRequest(begin: Int, length: Int)
+}
+
+pub type PeerSession {
+  PeerSession(
+    socket: mug.Socket,
+    peer_id: PeerId,
+    bit_field: Option(BitArray),
+    piece: Option(Piece),
+    choked: Bool,
+    interested: Bool,
   )
 }
 
@@ -61,77 +57,39 @@ const block_size = 16_384
 
 const message_timeout = 5000
 
-pub fn new_peer(endpoint: String, download_path: String) -> PeerState {
-  PeerState(
-    endpoint,
-    download_path,
+pub fn new_session(socket: mug.Socket, peer_id: PeerId) -> PeerSession {
+  PeerSession(
+    socket,
+    peer_id,
+    bit_field: None,
+    piece: None,
     choked: True,
     interested: False,
-    bit_field: None,
   )
 }
 
-pub fn fetch_pieces(
-  torrent: bencode.Torrent,
-  state: PeerState,
+fn new_piece(index: Int, hash: BitArray, length: Int) -> Piece {
+  let requests = request_blocks(length)
+  Piece(
+    index: index,
+    hash: hash,
+    length: length,
+    blocks: [],
+    remaining_requests: requests,
+    outstanding_requests: dict.new(),
+  )
+}
+
+pub fn handshake(
+  endpoint: String,
+  info_hash: BitArray,
   peer_id: BitArray,
-) -> Result(Nil, ProtocolError) {
+) -> Result(PeerSession, ProtocolError) {
   use #(ip4_addr, port) <- try(
-    validate_endpoint(state.endpoint) |> replace_error(InvalidEndpoint),
+    validate_endpoint(endpoint) |> replace_error(InvalidEndpoint),
   )
   use socket <- try(connect(ip4_addr, port))
-  use _peer_peer_id <- try(peer_handshake(socket, torrent.info_hash, peer_id))
-
-  one_piece(socket, torrent, state, torrent.pieces, 0)
-  |> result.replace(Nil)
-}
-
-pub fn new_piece(
-  piece_index: Int,
-  length: Int,
-  piece_hash: BitArray,
-) -> PieceDownload {
-  PieceDownload(
-    index: piece_index,
-    length: length,
-    hash: piece_hash,
-    offset: 0,
-    blocks: [],
-  )
-}
-
-pub fn one_piece(
-  socket: mug.Socket,
-  torrent: bencode.Torrent,
-  state: PeerState,
-  pieces: List(BitArray),
-  piece_index: Int,
-) -> Result(Nil, ProtocolError) {
-  case pieces {
-    [piece_hash, ..rest] -> {
-      let length =
-        piece_length(piece_index, torrent.length, torrent.piece_length)
-      let piece_downlaod = new_piece(piece_index, length, piece_hash)
-
-      use #(new_state, outcome) <- try(peer_exchange(
-        socket,
-        state,
-        piece_downlaod,
-      ))
-      case outcome {
-        PieceDownloaded(piece) -> {
-          use _ <- try(
-            simplifile.append_bits(new_state.download_path, piece)
-            |> map_error(FileError),
-          )
-          one_piece(socket, torrent, new_state, rest, piece_index + 1)
-        }
-        PeerDoesNotHavePiece ->
-          one_piece(socket, torrent, new_state, rest, piece_index + 1)
-      }
-    }
-    [] -> Ok(Nil)
-  }
+  peer_handshake(socket, info_hash, peer_id)
 }
 
 pub fn connect(host: String, port: Int) -> Result(mug.Socket, ProtocolError) {
@@ -153,8 +111,7 @@ pub fn peer_handshake(
   socket: mug.Socket,
   info_hash: BitArray,
   peer_id: BitArray,
-) -> Result(BitArray, ProtocolError) {
-  let handshake_msg_length = 20 + 8 + 20 + 20
+) -> Result(PeerSession, ProtocolError) {
   let handshake_msg = <<
     19:int,
     "BitTorrent protocol",
@@ -163,8 +120,9 @@ pub fn peer_handshake(
     peer_id:bits,
   >>
   use _ <- try(mug.send(socket, handshake_msg) |> map_error(TCPError))
+
   use handshake_back <- try(
-    mug.receive_exact(socket, handshake_msg_length, message_timeout)
+    mug.receive_exact(socket, 20 + 8 + 20 + 20, message_timeout)
     |> map_error(TCPError),
   )
   case handshake_back {
@@ -176,7 +134,7 @@ pub fn peer_handshake(
       peer_id:bytes-size(20)-unit(8),
     >> -> {
       case rev_info_hash == info_hash {
-        True -> Ok(peer_id)
+        True -> Ok(new_session(socket, PeerId(peer_id)))
         False -> Error(InfoHashMismatch)
       }
     }
@@ -184,135 +142,277 @@ pub fn peer_handshake(
   }
 }
 
+pub type Torrent {
+  Torrent(
+    info: bencode.Torrent,
+    download_path: String,
+    piece_hash: dict.Dict(Int, BitArray),
+    peers: List(PeerId),
+  )
+}
+
+pub type PeerId {
+  PeerId(BitArray)
+}
+
+fn new_torrent(
+  torrent: bencode.Torrent,
+  download_path: String,
+  peers: List(PeerId),
+) {
+  let piece_hash =
+    torrent.pieces
+    |> list.index_map(fn(piece, index) { #(index, piece) })
+    |> dict.from_list
+  Torrent(
+    info: torrent,
+    download_path: download_path,
+    piece_hash: piece_hash,
+    peers: peers,
+  )
+}
+
+pub fn fetch_torrent(
+  torrent: bencode.Torrent,
+  download_path: String,
+  endpoints: List(String),
+  peer_id: BitArray,
+) -> Result(Nil, ProtocolError) {
+  //connect to all endpoints
+  let sessions =
+    list.filter_map(endpoints, fn(endpoint) {
+      handshake(endpoint, torrent.info_hash, peer_id)
+    })
+  //check what they have
+  let bitfields =
+    list.filter_map(sessions, fn(session) { receive_bitfield(session) })
+
+  let peers = sessions |> list.map(fn(session) { session.peer_id })
+  let torrent = new_torrent(torrent, download_path, peers)
+
+  //assign piece
+  let sessions = assign_pieces(torrent, sessions)
+  todo
+  // one_piece(session.socket, torrent, session.state, torrent.pieces, 0)
+  // |> result.replace(Nil)
+}
+
+fn work(torrent, sessions) {
+  list.each(sessions, fn(session) { peer_exchange(session) })
+}
+
+fn assign_pieces(
+  torrent: Torrent,
+  sessions: List(PeerSession),
+) -> List(PeerSession) {
+  let pieces = dict.to_list(torrent.piece_hash)
+  keep_assigning(torrent, sessions, pieces, [])
+}
+
+fn keep_assigning(
+  torrent: Torrent,
+  sessions: List(PeerSession),
+  pieces: List(#(Int, BitArray)),
+  new_sessions: List(PeerSession),
+) -> List(PeerSession) {
+  case sessions, pieces {
+    [], _ -> sessions
+    _, [] -> new_sessions |> list.append(sessions)
+    [session, ..sessions], [piece, ..pieces] -> {
+      let #(index, hash) = piece
+      let piece_length =
+        piece_length(index, torrent.info.length, torrent.info.piece_length)
+      let piece = new_piece(index, hash, piece_length)
+      let new_ses = PeerSession(..session, piece: Some(piece))
+      keep_assigning(torrent, sessions, pieces, [new_ses, ..new_sessions])
+    }
+  }
+}
+
+// pub fn one_piece(
+//   socket: mug.Socket,
+//   torrent: bencode.Torrent,
+//   state: PeerState,
+//   pieces: List(BitArray),
+//   piece_index: Int,
+// ) -> Result(Nil, ProtocolError) {
+//   case pieces {
+//     [piece_hash, ..rest] -> {
+//       let length =
+//         piece_length(piece_index, torrent.length, torrent.piece_length)
+//       let piece_downlaod = new_piece(piece_index, length, piece_hash)
+
+//       use #(new_state, outcome) <- try(peer_exchange(
+//         socket,
+//         state,
+//         piece_downlaod,
+//       ))
+//       case outcome {
+//         PieceDownloaded(piece) -> {
+//           use _ <- try(
+//             simplifile.append_bits(new_state.download_path, piece)
+//             |> map_error(FileError),
+//           )
+//           one_piece(socket, torrent, new_state, rest, piece_index + 1)
+//         }
+//         PeerDoesNotHavePiece ->
+//           one_piece(socket, torrent, new_state, rest, piece_index + 1)
+//       }
+//     }
+//     [] -> Ok(Nil)
+//   }
+// }
+
+fn receive_bitfield(
+  session: PeerSession,
+) -> Result(PeerSession, ProtocolError) {
+  use message <- try(receive_message(session.socket))
+  case message {
+    BitField(bits) -> Ok(PeerSession(..session, bit_field: Some(bits)))
+    _ -> receive_bitfield(session)
+  }
+}
+
+fn peer_exchange(
+  session: PeerSession,
+) -> Result(#(BitArray, PeerSession), ProtocolError) {
+  case session {
+    PeerSession(bit_field: None, ..) -> {
+      use session <- try(receive_bitfield(session))
+      Ok(#(<<>>, session))
+    }
+    PeerSession(choked: _, interested: False, ..) -> continue(session)
+    PeerSession(choked: False, interested: True, ..) -> {
+      use _ <- try(request_piece(session))
+      continue(session)
+    }
+    PeerSession(choked: True, interested: True, ..) -> continue(session)
+  }
+}
+
 fn log(m: PeerMessage) {
   case m {
-    Piece(piece_index, begin, _) -> Piece(..m, block: <<>>)
+    PieceMessage(_, _, _) -> PieceMessage(..m, block: <<>>)
     _ -> m
   }
 }
 
 fn continue(
-  socket: mug.Socket,
-  state: PeerState,
-  piece: PieceDownload,
-) -> Result(#(PeerState, PeerOutcome), ProtocolError) {
-  use message <- try(receive_message(socket))
+  session: PeerSession,
+) -> Result(#(BitArray, PeerSession), ProtocolError) {
+  use message <- try(receive_message(session.socket))
+  echo log(message)
   case message {
-    Choke -> peer_exchange(socket, PeerState(..state, choked: True), piece)
-    Unchoke -> peer_exchange(socket, PeerState(..state, choked: False), piece)
-
-    Have -> peer_exchange(socket, state, piece)
-    BitField(payload) -> {
-      use state <- try(handle_bit_field(socket, payload, state))
-      peer_exchange(socket, state, piece)
-    }
-    Piece(_, _, _) -> {
-      use piece <- try(handle_piece_block(message, piece))
-      case piece.offset == piece.length {
-        False -> peer_exchange(socket, state, piece)
-        True -> {
+    Choke -> peer_exchange(PeerSession(..session, choked: True))
+    Unchoke -> peer_exchange(PeerSession(..session, choked: False))
+    Have -> peer_exchange(session)
+    BitField(_) ->
+      Error(ProtocolError("Protocol violation got a 2nd bit field"))
+    PieceMessage(_, _, _) -> {
+      use piece <- try(handle_piece_block(session, message))
+      case piece.remaining_requests {
+        [_, ..] -> peer_exchange(session)
+        [] -> {
           let binary = list.reverse(piece.blocks) |> bit_array.concat
           use _ <- try(verify_piece(binary, piece.hash))
-          Ok(#(state, PieceDownloaded(binary)))
+          Ok(#(binary, session))
         }
       }
     }
-    message -> Error(UnexpectedMessage(peer_message_id(message)))
-  }
-}
-
-fn peer_exchange(
-  socket: mug.Socket,
-  state: PeerState,
-  piece: PieceDownload,
-) -> Result(#(PeerState, PeerOutcome), ProtocolError) {
-  case state {
-    PeerState(_, _, choked: _, interested: False, bit_field: None) ->
-      continue(socket, state, piece)
-    PeerState(_, _, choked: _, interested: False, bit_field: Some(_)) ->
-      Ok(#(state, PeerDoesNotHavePiece))
-    PeerState(_, _, choked: False, interested: True, bit_field: _) -> {
-      use _ <- try(request_piece(socket, piece))
-      continue(socket, state, piece)
-    }
-    PeerState(_, _, choked: True, interested: True, bit_field: _) ->
-      continue(socket, state, piece)
+    message -> Error(UnexpectedMessage(message_id(message)))
   }
 }
 
 fn handle_bit_field(
-  socket: mug.Socket,
-  payload: BitArray,
-  state: PeerState,
-) -> Result(PeerState, ProtocolError) {
+  session: PeerSession,
+  bit_field: BitArray,
+) -> Result(PeerSession, ProtocolError) {
   let interested = True
 
   case interested {
     True -> {
-      let id = peer_message_id(Interested)
+      let id = message_id(Interested)
       let message = <<1:big-size(4)-unit(8), id:int>>
-      use _ <- try(mug.send(socket, message) |> map_error(TCPError))
-      Ok(PeerState(..state, interested: True))
+      use _ <- try(mug.send(session.socket, message) |> map_error(TCPError))
+      Ok(PeerSession(..session, interested: True))
     }
-    False -> {
-      let id = peer_message_id(NotInterested)
-      let message = <<1:big-size(4)-unit(8), id:int>>
-      use _ <- try(mug.send(socket, message) |> map_error(TCPError))
-      Ok(PeerState(..state, interested: False))
-    }
+    False -> Ok(PeerSession(..session, interested: False))
   }
 }
 
 fn handle_piece_block(
+  session: PeerSession,
   message: PeerMessage,
-  piece: PieceDownload,
-) -> Result(PieceDownload, ProtocolError) {
-  let assert Piece(peer_piece_index, begin, block) = message
+) -> Result(Piece, ProtocolError) {
+  let assert Some(piece) = session.piece
+  let assert PieceMessage(peer_piece_index, begin, block) = message
   use <- bool.guard(
     peer_piece_index != piece.index,
     return: Error(ProtocolError("piece index mismatch")),
   )
-  use <- bool.guard(
-    begin != piece.offset,
-    return: Error(ProtocolError("piece index mismatch")),
-  )
-  let rem = piece.length - begin
-  let expected_length = case rem > block_size {
-    True -> block_size
-    False -> rem
-  }
-  let rx_block_size = bit_array.byte_size(block)
-  use <- bool.guard(
-    rx_block_size != expected_length,
-    return: Error(ProtocolError("incomplete block")),
-  )
+  let outstanding = dict.get(piece.outstanding_requests, begin)
 
-  Ok(
-    PieceDownload(..piece, offset: piece.offset + rx_block_size, blocks: [
-      block,
-      ..piece.blocks
-    ]),
-  )
+  case outstanding {
+    Ok(block_request) -> {
+      use <- bool.guard(
+        begin != block_request.begin,
+        return: Error(ProtocolError("piece block offset mismatch")),
+      )
+      let rem = piece.length - begin
+      let expected_block_size = case rem > block_size {
+        True -> block_size
+        False -> rem
+      }
+      let rx_block_size = bit_array.byte_size(block)
+      use <- bool.guard(
+        rx_block_size != expected_block_size,
+        return: Error(ProtocolError("incomplete block")),
+      )
+
+      let outstanding = dict.delete(piece.outstanding_requests, begin)
+      let piece =
+        Piece(..piece, outstanding_requests: outstanding, blocks: [
+          block,
+          ..piece.blocks
+        ])
+      Ok(piece)
+    }
+    Error(_) -> Ok(piece)
+  }
 }
 
-fn request_piece(
-  socket: mug.Socket,
-  piece: PieceDownload,
-) -> Result(Nil, ProtocolError) {
-  let PieceDownload(index, length, _hash, offset, _blocks) = piece
+fn request_piece(session: PeerSession) -> Result(PeerSession, ProtocolError) {
+  let assert Some(piece) = session.piece
+  let reqs = piece.remaining_requests |> list.take(4)
 
-  let block_length = int.min(length - offset, block_size)
-  let req = Request(piece_index: index, begin: offset, length: block_length)
-  let id = peer_message_id(req)
+  use _ <- try(
+    list.try_each(reqs, fn(req) {
+      let id = 6
+      let request_message = <<
+        13:big-size(4)-unit(8),
+        id:int,
+        piece.index:big-size(4)-unit(8),
+        req.begin:big-size(4)-unit(8),
+        req.length:big-size(4)-unit(8),
+      >>
 
-  let request_message = <<
-    13:big-size(4)-unit(8),
-    id:int,
-    req.piece_index:big-size(4)-unit(8),
-    req.begin:big-size(4)-unit(8),
-    req.length:big-size(4)-unit(8),
-  >>
-  mug.send(socket, request_message) |> map_error(TCPError)
+      mug.send(session.socket, request_message)
+      |> map_error(TCPError)
+    }),
+  )
+
+  let outstanding =
+    list.fold(reqs, piece.outstanding_requests, fn(outstanding, req) {
+      dict.insert(outstanding, req.begin, req)
+    })
+  let remaining = list.drop(piece.remaining_requests, 4)
+  let new_piece =
+    Piece(
+      ..piece,
+      remaining_requests: remaining,
+      outstanding_requests: outstanding,
+    )
+  Ok(PeerSession(..session, piece: Some(new_piece)))
 }
 
 fn receive_message(socket: mug.Socket) -> Result(PeerMessage, ProtocolError) {
@@ -357,13 +457,13 @@ fn parse_message(message: BitArray) -> Result(PeerMessage, ProtocolError) {
         begin:big-size(4)-unit(8),
         block:bits,
       >> = payload
-      Ok(Piece(piece_index, begin, block))
+      Ok(PieceMessage(piece_index, begin, block))
     }
     id -> Error(UnknownMessageId(id))
   }
 }
 
-fn peer_message_id(message: PeerMessage) -> Int {
+fn message_id(message: PeerMessage) -> Int {
   case message {
     Choke -> 0
     Unchoke -> 1
@@ -372,28 +472,27 @@ fn peer_message_id(message: PeerMessage) -> Int {
     Have -> 4
     BitField(_) -> 5
     Request(_, _, _) -> 6
-    Piece(_, _, _) -> 7
+    PieceMessage(_, _, _) -> 7
   }
 }
 
 fn verify_piece(binary: BitArray, hash: BitArray) {
   let calc = crypto.hash(crypto.Sha1, binary)
-
   case calc == hash {
     True -> Ok(Nil)
     False -> Error(ProtocolError("hashes dont match"))
   }
 }
 
-fn piece_length(index: Int, file_length: Int, piece_length: Int) -> Int {
-  let piece_count = { file_length + piece_length - 1 } / piece_length
+fn piece_length(index: Int, file_length: Int, piece_size: Int) -> Int {
+  let piece_count = { file_length + piece_size - 1 } / piece_size
   case piece_count - 1 == index {
     True ->
-      case file_length % piece_length {
-        0 -> piece_length
+      case file_length % piece_size {
+        0 -> piece_size
         rem -> rem
       }
-    False -> piece_length
+    False -> piece_size
   }
 }
 
@@ -407,17 +506,35 @@ fn validate_endpoint(endpoint: String) -> Result(#(String, Int), Nil) {
   }
 }
 
-pub fn handshake(
-  endpoint: String,
-  torrent: bencode.Torrent,
-  peer_id: BitArray,
-) -> Result(#(mug.Socket, BitArray), ProtocolError) {
-  use #(ip4_addr, port) <- try(
-    validate_endpoint(endpoint) |> replace_error(InvalidEndpoint),
-  )
-  use socket <- try(connect(ip4_addr, port))
-  use peer_peer_id <- try(peer_handshake(socket, torrent.info_hash, peer_id))
-  Ok(#(socket, peer_peer_id))
+fn request_blocks(length: Int) -> List(BlockRequest) {
+  let block_count = { length + block_size - 1 } / block_size
+  request_blocks_loop(length, block_count - 1, [])
+}
+
+fn request_blocks_loop(
+  length: Int,
+  block: Int,
+  requests: List(BlockRequest),
+) -> List(BlockRequest) {
+  case block < 0 {
+    False -> {
+      let begin = block * block_size
+      let block_length = int.min(block_size, length - begin)
+      let request = BlockRequest(begin: begin, length: block_length)
+      request_blocks_loop(length, block - 1, [request, ..requests])
+    }
+    True -> requests
+  }
+}
+
+pub type ProtocolError {
+  InvalidEndpoint
+  InvalidResponse
+  InfoHashMismatch
+  TCPError(mug.Error)
+  UnknownMessageId(Int)
+  UnexpectedMessage(Int)
+  ProtocolError(String)
 }
 
 pub fn describe_error(error: ProtocolError) -> String {
@@ -425,7 +542,6 @@ pub fn describe_error(error: ProtocolError) -> String {
     InvalidEndpoint -> "Invalid endpoint. Expected <ip>:<port>."
     InvalidResponse -> "Received an invalid response from the peer"
     InfoHashMismatch -> "Peer responded with a different info hash"
-    FileError(err) -> simplifile.describe_error(err)
     TCPError(err) -> mug.describe_error(err)
     ProtocolError(err) -> err
     UnknownMessageId(msg_id) -> "Unknown Message Id " <> int.to_string(msg_id)

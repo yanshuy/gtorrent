@@ -17,7 +17,7 @@ pub fn main() {
 }
 
 pub fn execute(args: List(String)) {
-  start([Inets])
+  start([Inets, Crypto, Asn1, PublicKey, Ssl])
   case execute_cmd(args) {
     Ok(_) -> Nil
     Error(err) -> {
@@ -141,14 +141,14 @@ fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
 
   use torrent <- try(info(filename))
-  use #(_, peer_peer_id) <- try(
-    peer_protocol.handshake(endpoint, torrent, peer_id)
+  use session <- try(
+    peer_protocol.handshake(endpoint, torrent.info_hash, peer_id)
     |> map_error(PeerError),
   )
-
+  let peer_protocol.PeerId(id) = session.peer_id
   io.println(
     "Peer ID: "
-    <> peer_peer_id
+    <> id
     |> bit_array.base16_encode
     |> string.lowercase,
   )
@@ -237,6 +237,10 @@ fn application_start(app: Application) -> Result(Nil, StartError)
 
 pub type Application {
   Inets
+  Crypto
+  Asn1
+  PublicKey
+  Ssl
 }
 
 pub type StartError {

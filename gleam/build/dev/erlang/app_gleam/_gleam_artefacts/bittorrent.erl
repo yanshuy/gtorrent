@@ -13,7 +13,7 @@
     {tracker_error, tracker:tracker_error()} |
     {peer_error, peer_protocol:protocol_error()}.
 
--type application() :: inets.
+-type application() :: inets | crypto | asn1 | public_key | ssl.
 
 -type start_error() :: {start_error, binary()}.
 
@@ -131,10 +131,10 @@ cmd_download(Download_path, Torrent_file) ->
                                                 function => <<"cmd_download"/utf8>>,
                                                 line => 200,
                                                 value => _assert_fail,
-                                                start => 5127,
-                                                'end' => 5160,
-                                                pattern_start => 5138,
-                                                pattern_end => 5152})
+                                                start => 5157,
+                                                'end' => 5190,
+                                                pattern_start => 5168,
+                                                pattern_end => 5182})
                             end,
                             State = peer_protocol:new_peer(
                                 Endpoint@1,
@@ -216,10 +216,10 @@ cmd_download_piece(Download_path, Torrent_file, Piece_index_str) ->
                                                                 function => <<"cmd_download_piece"/utf8>>,
                                                                 line => 179,
                                                                 value => _assert_fail,
-                                                                start => 4516,
-                                                                'end' => 4549,
-                                                                pattern_start => 4527,
-                                                                pattern_end => 4541}
+                                                                start => 4546,
+                                                                'end' => 4579,
+                                                                pattern_start => 4557,
+                                                                pattern_end => 4571}
                                                         )
                                             end,
                                             State = peer_protocol:new_peer(
@@ -474,7 +474,7 @@ execute_cmd(Args) ->
             {error, {unknown_command, Command}}
     end.
 
--file("src/bittorrent.gleam", 246).
+-file("src/bittorrent.gleam", 250).
 -spec start(list(application())) -> nil.
 start(Apps) ->
     gleam@list:each(Apps, fun(App) -> case bittorrent_ffi:start(App) of
@@ -489,7 +489,7 @@ start(Apps) ->
 -file("src/bittorrent.gleam", 19).
 -spec execute(list(binary())) -> nil.
 execute(Args) ->
-    start([inets]),
+    start([inets, crypto, asn1, public_key, ssl]),
     case execute_cmd(Args) of
         {ok, _} ->
             nil;

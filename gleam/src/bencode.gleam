@@ -18,7 +18,6 @@ pub type DecodeError {
   UnexpectedEof
   InvalidInteger
   InvalidStringLength
-  InvalidDictionaryKey
   InvalidUtf8
   InvalidPrefix(Int)
   MissingKey(String)
@@ -51,7 +50,11 @@ fn decode_string(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
     helpers.take_until(bits, ":")
     |> result.replace_error(NoColon),
   )
-  let assert Ok(num_str) = bit_array.to_string(bits)
+  use num_str <- try(
+    bit_array.to_string(bits)
+    |> result.replace_error(InvalidUtf8),
+  )
+
   use str_length <- try(
     int.parse(num_str) |> result.replace_error(InvalidStringLength),
   )
@@ -110,9 +113,7 @@ fn decode_dictionary(
     }
 
     _ -> {
-      use #(string, rest) <- try(
-        decode_string(bits) |> result.replace_error(InvalidDictionaryKey),
-      )
+      use #(string, rest) <- try(decode_string(bits))
       let assert BString(key_bits) = string
       let assert Ok(key) = bit_array.to_string(key_bits)
 
@@ -206,7 +207,9 @@ pub fn parse_torrent(torrent: Bencode) -> Result(Torrent, DecodeError) {
   use info_entries <- try(get_entries(dict, "info"))
   let info_dict = dict.from_list(info_entries)
 
-  use length <- try(get_int(info_dict, "length"))
+  // use length <- try(get_int(info_dict, "length"))
+  let length = get_int(info_dict, "length") |> result.unwrap(0)
+
   use piece_length <- try(get_int(info_dict, "piece length"))
   use pieces <- try(get_string_bits(info_dict, "pieces"))
 
@@ -321,7 +324,6 @@ pub fn describe_error(error: DecodeError) -> String {
     InvalidUtf8 -> "Invalid UTF-8"
     InvalidPrefix(byte) -> "Invalid prefix: " <> int.to_string(byte)
     NoColon -> "The ':' character is not found in the binary"
-    InvalidDictionaryKey -> "Invalid dict key"
     MissingKey(key) -> "Missing Key: " <> key
     InvalidTorrent(err) -> err
   }
