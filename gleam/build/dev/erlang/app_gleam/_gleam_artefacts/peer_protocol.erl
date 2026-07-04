@@ -1,12 +1,13 @@
 -module(peer_protocol).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/peer_protocol.gleam").
--export([peer_handshake/3, one_piece/5, handshake/3, describe_error/1]).
+-export([new_peer/2, new_piece/3, one_piece/5, peer_handshake/3, connect/2, fetch_pieces/3, handshake/3, describe_error/1]).
 -export_type([protocol_error/0, peer_message/0, peer_state/0, piece_download/0, peer_outcome/0]).
 
 -type protocol_error() :: invalid_endpoint |
     invalid_response |
     info_hash_mismatch |
+    {file_error, simplifile:file_error()} |
     {t_c_p_error, mug:error()} |
     {unknown_message_id, integer()} |
     {unexpected_message, integer()} |
@@ -21,7 +22,12 @@
     {request, integer(), integer(), integer()} |
     {piece, integer(), integer(), bitstring()}.
 
--type peer_state() :: {peer_state, boolean(), boolean()}.
+-type peer_state() :: {peer_state,
+        binary(),
+        binary(),
+        boolean(),
+        boolean(),
+        gleam@option:option(bitstring())}.
 
 -type piece_download() :: {piece_download,
         integer(),
@@ -33,31 +39,12 @@
 -type peer_outcome() :: {piece_downloaded, bitstring()} |
     peer_does_not_have_piece.
 
--file("src/peer_protocol.gleam", 331).
--spec piece_length(integer(), integer(), integer()) -> integer().
-piece_length(Index, File_length, Piece_length) ->
-    Piece_count = case Piece_length of
-        0 -> 0;
-        Gleam@denominator -> ((File_length + Piece_length) - 1) div Gleam@denominator
-    end,
-    case (Piece_count - 1) =:= Index of
-        true ->
-            case case Piece_length of
-                0 -> 0;
-                Gleam@denominator@1 -> File_length rem Gleam@denominator@1
-            end of
-                0 ->
-                    Piece_length;
+-file("src/peer_protocol.gleam", 64).
+-spec new_peer(binary(), binary()) -> peer_state().
+new_peer(Endpoint, Download_path) ->
+    {peer_state, Endpoint, Download_path, true, false, none}.
 
-                Rem ->
-                    Rem
-            end;
-
-        false ->
-            Piece_length
-    end.
-
--file("src/peer_protocol.gleam", 309).
+-file("src/peer_protocol.gleam", 368).
 -spec peer_message_id(peer_message()) -> integer().
 peer_message_id(Message) ->
     case Message of
@@ -86,7 +73,7 @@ peer_message_id(Message) ->
             7
     end.
 
--file("src/peer_protocol.gleam", 322).
+-file("src/peer_protocol.gleam", 381).
 -spec verify_piece(bitstring(), bitstring()) -> {ok, nil} |
     {error, protocol_error()}.
 verify_piece(Binary, Hash) ->
@@ -99,23 +86,7 @@ verify_piece(Binary, Hash) ->
             {error, {protocol_error, <<"hashes dont match"/utf8>>}}
     end.
 
--file("src/peer_protocol.gleam", 241).
--spec request_piece(mug:socket(), piece_download()) -> {ok, nil} |
-    {error, protocol_error()}.
-request_piece(Socket, Piece) ->
-    {piece_download, Index, Length, _, Offset, _} = Piece,
-    Block_length = gleam@int:min(Length - Offset, 16384),
-    Req = {request, Index, Offset, Block_length},
-    Id = peer_message_id(Req),
-    Request_message = <<13:4/big-unit:8,
-        Id/integer,
-        (erlang:element(2, Req)):4/big-unit:8,
-        (erlang:element(3, Req)):4/big-unit:8,
-        (erlang:element(4, Req)):4/big-unit:8>>,
-    _pipe = mug:send(Socket, Request_message),
-    gleam@result:map_error(_pipe, fun(Field@0) -> {t_c_p_error, Field@0} end).
-
--file("src/peer_protocol.gleam", 208).
+-file("src/peer_protocol.gleam", 268).
 -spec handle_piece_block(peer_message(), piece_download()) -> {ok,
         piece_download()} |
     {error, protocol_error()}.
@@ -131,12 +102,12 @@ handle_piece_block(Message, Piece) ->
                         file => <<?FILEPATH/utf8>>,
                         module => <<"peer_protocol"/utf8>>,
                         function => <<"handle_piece_block"/utf8>>,
-                        line => 212,
+                        line => 272,
                         value => _assert_fail,
-                        start => 5255,
-                        'end' => 5313,
-                        pattern_start => 5266,
-                        pattern_end => 5303})
+                        start => 6709,
+                        'end' => 6767,
+                        pattern_start => 6720,
+                        pattern_end => 6757})
     end,
     gleam@bool:guard(
         Peer_piece_index@1 /= erlang:element(2, Piece),
@@ -173,7 +144,7 @@ handle_piece_block(Message, Piece) ->
         end
     ).
 
--file("src/peer_protocol.gleam", 185).
+-file("src/peer_protocol.gleam", 245).
 -spec handle_bit_field(mug:socket(), bitstring(), peer_state()) -> {ok,
         peer_state()} |
     {error, protocol_error()}.
@@ -191,7 +162,15 @@ handle_bit_field(Socket, Payload, State) ->
                         fun(Field@0) -> {t_c_p_error, Field@0} end
                     )
                 end,
-                fun(_) -> {ok, {peer_state, erlang:element(2, State), true}} end
+                fun(_) ->
+                    {ok,
+                        {peer_state,
+                            erlang:element(2, State),
+                            erlang:element(3, State),
+                            erlang:element(4, State),
+                            true,
+                            erlang:element(6, State)}}
+                end
             );
 
         false ->
@@ -206,12 +185,18 @@ handle_bit_field(Socket, Payload, State) ->
                     )
                 end,
                 fun(_) ->
-                    {ok, {peer_state, erlang:element(2, State), false}}
+                    {ok,
+                        {peer_state,
+                            erlang:element(2, State),
+                            erlang:element(3, State),
+                            erlang:element(4, State),
+                            false,
+                            erlang:element(6, State)}}
                 end
             )
     end.
 
--file("src/peer_protocol.gleam", 280).
+-file("src/peer_protocol.gleam", 339).
 -spec parse_message(bitstring()) -> {ok, peer_message()} |
     {error, protocol_error()}.
 parse_message(Message) ->
@@ -223,12 +208,12 @@ parse_message(Message) ->
                         file => <<?FILEPATH/utf8>>,
                         module => <<"peer_protocol"/utf8>>,
                         function => <<"parse_message"/utf8>>,
-                        line => 281,
+                        line => 340,
                         value => _assert_fail,
-                        start => 7127,
-                        'end' => 7176,
-                        pattern_start => 7138,
-                        pattern_end => 7166})
+                        start => 8580,
+                        'end' => 8629,
+                        pattern_start => 8591,
+                        pattern_end => 8619})
     end,
     case Message_id@1 of
         0 ->
@@ -260,12 +245,12 @@ parse_message(Message) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"peer_protocol"/utf8>>,
                                 function => <<"parse_message"/utf8>>,
-                                line => 290,
+                                line => 349,
                                 value => _assert_fail@1,
-                                start => 7354,
-                                'end' => 7498,
-                                pattern_start => 7365,
-                                pattern_end => 7488})
+                                start => 8807,
+                                'end' => 8951,
+                                pattern_start => 8818,
+                                pattern_end => 8941})
             end,
             {ok, {request, Piece_index@1, Begin@1, Length@1}};
 
@@ -280,12 +265,12 @@ parse_message(Message) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"peer_protocol"/utf8>>,
                                 function => <<"parse_message"/utf8>>,
-                                line => 298,
+                                line => 357,
                                 value => _assert_fail@2,
-                                start => 7568,
-                                'end' => 7696,
-                                pattern_start => 7579,
-                                pattern_end => 7686})
+                                start => 9021,
+                                'end' => 9149,
+                                pattern_start => 9032,
+                                pattern_end => 9139})
             end,
             {ok, {piece, Piece_index@3, Begin@3, Block@1}};
 
@@ -293,7 +278,7 @@ parse_message(Message) ->
             {error, {unknown_message_id, Id}}
     end.
 
--file("src/peer_protocol.gleam", 261).
+-file("src/peer_protocol.gleam", 320).
 -spec receive_message(mug:socket()) -> {ok, peer_message()} |
     {error, protocol_error()}.
 receive_message(Socket) ->
@@ -314,12 +299,12 @@ receive_message(Socket) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"peer_protocol"/utf8>>,
                                 function => <<"receive_message"/utf8>>,
-                                line => 265,
+                                line => 324,
                                 value => _assert_fail,
-                                start => 6725,
-                                'end' => 6786,
-                                pattern_start => 6736,
-                                pattern_end => 6779})
+                                start => 8178,
+                                'end' => 8239,
+                                pattern_start => 8189,
+                                pattern_end => 8232})
             end,
             case Message_length@1 of
                 0 ->
@@ -344,42 +329,49 @@ receive_message(Socket) ->
         end
     ).
 
--file("src/peer_protocol.gleam", 169).
+-file("src/peer_protocol.gleam", 300).
+-spec request_piece(mug:socket(), piece_download()) -> {ok, nil} |
+    {error, protocol_error()}.
+request_piece(Socket, Piece) ->
+    {piece_download, Index, Length, _, Offset, _} = Piece,
+    Block_length = gleam@int:min(Length - Offset, 16384),
+    Req = {request, Index, Offset, Block_length},
+    Id = peer_message_id(Req),
+    Request_message = <<13:4/big-unit:8,
+        Id/integer,
+        (erlang:element(2, Req)):4/big-unit:8,
+        (erlang:element(3, Req)):4/big-unit:8,
+        (erlang:element(4, Req)):4/big-unit:8>>,
+    _pipe = mug:send(Socket, Request_message),
+    gleam@result:map_error(_pipe, fun(Field@0) -> {t_c_p_error, Field@0} end).
+
+-file("src/peer_protocol.gleam", 196).
 -spec continue(mug:socket(), peer_state(), piece_download()) -> {ok,
-        peer_outcome()} |
+        {peer_state(), peer_outcome()}} |
     {error, protocol_error()}.
 continue(Socket, State, Piece) ->
-    case State of
-        {peer_state, _, false} ->
-            {ok, peer_does_not_have_piece};
-
-        {peer_state, false, true} ->
-            gleam@result:'try'(
-                request_piece(Socket, Piece),
-                fun(_) -> peer_exchange(Socket, State, Piece) end
-            );
-
-        {peer_state, true, true} ->
-            peer_exchange(Socket, State, Piece)
-    end.
-
--file("src/peer_protocol.gleam", 135).
--spec peer_exchange(mug:socket(), peer_state(), piece_download()) -> {ok,
-        peer_outcome()} |
-    {error, protocol_error()}.
-peer_exchange(Socket, State, Piece) ->
     gleam@result:'try'(receive_message(Socket), fun(Message) -> case Message of
                 choke ->
-                    continue(
+                    peer_exchange(
                         Socket,
-                        {peer_state, true, erlang:element(3, State)},
+                        {peer_state,
+                            erlang:element(2, State),
+                            erlang:element(3, State),
+                            true,
+                            erlang:element(5, State),
+                            erlang:element(6, State)},
                         Piece
                     );
 
                 unchoke ->
-                    continue(
+                    peer_exchange(
                         Socket,
-                        {peer_state, false, erlang:element(3, State)},
+                        {peer_state,
+                            erlang:element(2, State),
+                            erlang:element(3, State),
+                            false,
+                            erlang:element(5, State),
+                            erlang:element(6, State)},
                         Piece
                     );
 
@@ -389,7 +381,9 @@ peer_exchange(Socket, State, Piece) ->
                 {bit_field, Payload} ->
                     gleam@result:'try'(
                         handle_bit_field(Socket, Payload, State),
-                        fun(State@1) -> continue(Socket, State@1, Piece) end
+                        fun(State@1) ->
+                            peer_exchange(Socket, State@1, Piece)
+                        end
                     );
 
                 {piece, _, _, _} ->
@@ -401,16 +395,7 @@ peer_exchange(Socket, State, Piece) ->
                                 Piece@1
                             ) of
                                 false ->
-                                    gleam@result:'try'(
-                                        request_piece(Socket, Piece@1),
-                                        fun(_) ->
-                                            peer_exchange(
-                                                Socket,
-                                                State,
-                                                Piece@1
-                                            )
-                                        end
-                                    );
+                                    peer_exchange(Socket, State, Piece@1);
 
                                 true ->
                                     Binary = begin
@@ -425,7 +410,9 @@ peer_exchange(Socket, State, Piece) ->
                                             erlang:element(4, Piece@1)
                                         ),
                                         fun(_) ->
-                                            {ok, {piece_downloaded, Binary}}
+                                            {ok,
+                                                {State,
+                                                    {piece_downloaded, Binary}}}
                                         end
                                     )
                             end
@@ -436,7 +423,120 @@ peer_exchange(Socket, State, Piece) ->
                     {error, {unexpected_message, peer_message_id(Message@1)}}
             end end).
 
--file("src/peer_protocol.gleam", 100).
+-file("src/peer_protocol.gleam", 226).
+-spec peer_exchange(mug:socket(), peer_state(), piece_download()) -> {ok,
+        {peer_state(), peer_outcome()}} |
+    {error, protocol_error()}.
+peer_exchange(Socket, State, Piece) ->
+    case State of
+        {peer_state, _, _, _, false, none} ->
+            continue(Socket, State, Piece);
+
+        {peer_state, _, _, _, false, {some, _}} ->
+            {ok, {State, peer_does_not_have_piece}};
+
+        {peer_state, _, _, false, true, _} ->
+            gleam@result:'try'(
+                request_piece(Socket, Piece),
+                fun(_) -> continue(Socket, State, Piece) end
+            );
+
+        {peer_state, _, _, true, true, _} ->
+            continue(Socket, State, Piece)
+    end.
+
+-file("src/peer_protocol.gleam", 90).
+-spec new_piece(integer(), integer(), bitstring()) -> piece_download().
+new_piece(Piece_index, Length, Piece_hash) ->
+    {piece_download, Piece_index, Length, Piece_hash, 0, []}.
+
+-file("src/peer_protocol.gleam", 390).
+-spec piece_length(integer(), integer(), integer()) -> integer().
+piece_length(Index, File_length, Piece_length) ->
+    Piece_count = case Piece_length of
+        0 -> 0;
+        Gleam@denominator -> ((File_length + Piece_length) - 1) div Gleam@denominator
+    end,
+    case (Piece_count - 1) =:= Index of
+        true ->
+            case case Piece_length of
+                0 -> 0;
+                Gleam@denominator@1 -> File_length rem Gleam@denominator@1
+            end of
+                0 ->
+                    Piece_length;
+
+                Rem ->
+                    Rem
+            end;
+
+        false ->
+            Piece_length
+    end.
+
+-file("src/peer_protocol.gleam", 104).
+-spec one_piece(
+    mug:socket(),
+    bencode:torrent(),
+    peer_state(),
+    list(bitstring()),
+    integer()
+) -> {ok, nil} | {error, protocol_error()}.
+one_piece(Socket, Torrent, State, Pieces, Piece_index) ->
+    case Pieces of
+        [Piece_hash | Rest] ->
+            Length = piece_length(
+                Piece_index,
+                erlang:element(4, Torrent),
+                erlang:element(5, Torrent)
+            ),
+            Piece_downlaod = new_piece(Piece_index, Length, Piece_hash),
+            gleam@result:'try'(
+                peer_exchange(Socket, State, Piece_downlaod),
+                fun(_use0) ->
+                    {New_state, Outcome} = _use0,
+                    case Outcome of
+                        {piece_downloaded, Piece} ->
+                            echo(Piece_index, nil, 124),
+                            gleam@result:'try'(
+                                begin
+                                    _pipe = simplifile_erl:append_bits(
+                                        erlang:element(3, New_state),
+                                        Piece
+                                    ),
+                                    gleam@result:map_error(
+                                        _pipe,
+                                        fun(Field@0) -> {file_error, Field@0} end
+                                    )
+                                end,
+                                fun(_) ->
+                                    one_piece(
+                                        Socket,
+                                        Torrent,
+                                        New_state,
+                                        Rest,
+                                        Piece_index + 1
+                                    )
+                                end
+                            );
+
+                        peer_does_not_have_piece ->
+                            one_piece(
+                                Socket,
+                                Torrent,
+                                New_state,
+                                Rest,
+                                Piece_index + 1
+                            )
+                    end
+                end
+            );
+
+        [] ->
+            {ok, nil}
+    end.
+
+-file("src/peer_protocol.gleam", 154).
 -spec peer_handshake(mug:socket(), bitstring(), bitstring()) -> {ok,
         bitstring()} |
     {error, protocol_error()}.
@@ -489,7 +589,7 @@ peer_handshake(Socket, Info_hash, Peer_id) ->
         end
     ).
 
--file("src/peer_protocol.gleam", 85).
+-file("src/peer_protocol.gleam", 139).
 -spec connect(binary(), integer()) -> {ok, mug:socket()} |
     {error, protocol_error()}.
 connect(Host, Port) ->
@@ -504,10 +604,10 @@ connect(Host, Port) ->
                             file => <<?FILEPATH/utf8>>,
                             module => <<"peer_protocol"/utf8>>,
                             function => <<"connect"/utf8>>,
-                            line => 95})
+                            line => 149})
             end end).
 
--file("src/peer_protocol.gleam", 343).
+-file("src/peer_protocol.gleam", 402).
 -spec validate_endpoint(binary()) -> {ok, {binary(), integer()}} | {error, nil}.
 validate_endpoint(Endpoint) ->
     case gleam@string:split(Endpoint, <<":"/utf8>>) of
@@ -521,15 +621,52 @@ validate_endpoint(Endpoint) ->
             {error, nil}
     end.
 
--file("src/peer_protocol.gleam", 55).
--spec one_piece(
-    bencode:torrent(),
-    binary(),
-    integer(),
-    bitstring(),
-    bitstring()
-) -> {ok, bitstring()} | {error, protocol_error()}.
-one_piece(Torrent, Endpoint, Piece_index, Piece_hash, Peer_id) ->
+-file("src/peer_protocol.gleam", 74).
+-spec fetch_pieces(bencode:torrent(), peer_state(), bitstring()) -> {ok, nil} |
+    {error, protocol_error()}.
+fetch_pieces(Torrent, State, Peer_id) ->
+    gleam@result:'try'(
+        begin
+            _pipe = validate_endpoint(erlang:element(2, State)),
+            gleam@result:replace_error(_pipe, invalid_endpoint)
+        end,
+        fun(_use0) ->
+            {Ip4_addr, Port} = _use0,
+            gleam@result:'try'(
+                connect(Ip4_addr, Port),
+                fun(Socket) ->
+                    gleam@result:'try'(
+                        peer_handshake(
+                            Socket,
+                            erlang:element(7, Torrent),
+                            Peer_id
+                        ),
+                        fun(_) ->
+                            echo(
+                                erlang:length(erlang:element(6, Torrent)),
+                                nil,
+                                85
+                            ),
+                            _pipe@1 = one_piece(
+                                Socket,
+                                Torrent,
+                                State,
+                                erlang:element(6, Torrent),
+                                0
+                            ),
+                            gleam@result:replace(_pipe@1, nil)
+                        end
+                    )
+                end
+            )
+        end
+    ).
+
+-file("src/peer_protocol.gleam", 412).
+-spec handshake(binary(), bencode:torrent(), bitstring()) -> {ok,
+        {mug:socket(), bitstring()}} |
+    {error, protocol_error()}.
+handshake(Endpoint, Torrent, Peer_id) ->
     gleam@result:'try'(
         begin
             _pipe = validate_endpoint(Endpoint),
@@ -546,60 +683,14 @@ one_piece(Torrent, Endpoint, Piece_index, Piece_hash, Peer_id) ->
                             erlang:element(7, Torrent),
                             Peer_id
                         ),
-                        fun(_) ->
-                            gleam@result:'try'(
-                                peer_exchange(
-                                    Socket,
-                                    {peer_state, true, false},
-                                    {piece_download,
-                                        Piece_index,
-                                        piece_length(
-                                            Piece_index,
-                                            erlang:element(4, Torrent),
-                                            erlang:element(5, Torrent)
-                                        ),
-                                        Piece_hash,
-                                        0,
-                                        []}
-                                ),
-                                fun(Outcome) -> case Outcome of
-                                        {piece_downloaded, Piece} ->
-                                            {ok, Piece};
-
-                                        peer_does_not_have_piece ->
-                                            {error,
-                                                {protocol_error,
-                                                    <<"They dont have it"/utf8>>}}
-                                    end end
-                            )
-                        end
+                        fun(Peer_peer_id) -> {ok, {Socket, Peer_peer_id}} end
                     )
                 end
             )
         end
     ).
 
--file("src/peer_protocol.gleam", 353).
--spec handshake(binary(), bencode:torrent(), bitstring()) -> {ok, bitstring()} |
-    {error, protocol_error()}.
-handshake(Endpoint, Torrent, Peer_id) ->
-    gleam@result:'try'(
-        begin
-            _pipe = validate_endpoint(Endpoint),
-            gleam@result:replace_error(_pipe, invalid_endpoint)
-        end,
-        fun(_use0) ->
-            {Ip4_addr, Port} = _use0,
-            gleam@result:'try'(
-                connect(Ip4_addr, Port),
-                fun(Socket) ->
-                    peer_handshake(Socket, erlang:element(7, Torrent), Peer_id)
-                end
-            )
-        end
-    ).
-
--file("src/peer_protocol.gleam", 365).
+-file("src/peer_protocol.gleam", 425).
 -spec describe_error(protocol_error()) -> binary().
 describe_error(Error) ->
     case Error of
@@ -612,11 +703,14 @@ describe_error(Error) ->
         info_hash_mismatch ->
             <<"Peer responded with a different info hash"/utf8>>;
 
-        {t_c_p_error, Err} ->
-            mug:describe_error(Err);
+        {file_error, Err} ->
+            simplifile:describe_error(Err);
 
-        {protocol_error, Err@1} ->
-            Err@1;
+        {t_c_p_error, Err@1} ->
+            mug:describe_error(Err@1);
+
+        {protocol_error, Err@2} ->
+            Err@2;
 
         {unknown_message_id, Msg_id} ->
             <<"Unknown Message Id "/utf8,
@@ -626,3 +720,215 @@ describe_error(Error) ->
             <<"Unexpected peer message: "/utf8,
                 (erlang:integer_to_binary(Msg_id@1))/binary>>
     end.
+
+-define(is_lowercase_char(X),
+    (X > 96 andalso X < 123)).
+
+-define(is_underscore_char(X),
+    (X == 95)).
+
+-define(is_digit_char(X),
+    (X > 47 andalso X < 58)).
+
+-define(is_ascii_character(X),
+    (erlang:is_integer(X) andalso X >= 32 andalso X =< 126)).
+
+-define(could_be_record(Tuple),
+    erlang:is_tuple(Tuple) andalso
+        erlang:is_atom(erlang:element(1, Tuple)) andalso
+        erlang:element(1, Tuple) =/= false andalso
+        erlang:element(1, Tuple) =/= true andalso
+        erlang:element(1, Tuple) =/= nil
+).
+-define(is_atom_char(C),
+    (?is_lowercase_char(C) orelse
+        ?is_underscore_char(C) orelse
+        ?is_digit_char(C))
+).
+
+-define(grey, "\e[90m").
+-define(reset_color, "\e[39m").
+
+echo(Value, Message, Line) ->
+    StringLine = erlang:integer_to_list(Line),
+    StringValue = echo@inspect(Value),
+    StringMessage =
+        case Message of
+            nil -> "";
+            M -> [" ", M]
+        end,
+
+    io:put_chars(
+      standard_error,
+      [
+        ?grey, ?FILEPATH, $:, StringLine, ?reset_color, StringMessage, $\n,
+        StringValue, $\n
+      ]
+    ),
+    Value.
+
+echo@inspect(Value) ->
+    case Value of
+        nil -> "Nil";
+        true -> "True";
+        false -> "False";
+        Int when erlang:is_integer(Int) -> erlang:integer_to_list(Int);
+        Float when erlang:is_float(Float) -> io_lib_format:fwrite_g(Float);
+        Binary when erlang:is_binary(Binary) -> inspect@binary(Binary);
+        Bits when erlang:is_bitstring(Bits) -> inspect@bit_array(Bits);
+        Atom when erlang:is_atom(Atom) -> inspect@atom(Atom);
+        List when erlang:is_list(List) -> inspect@list(List);
+        Map when erlang:is_map(Map) -> inspect@map(Map);
+        Record when ?could_be_record(Record) -> inspect@record(Record);
+        Tuple when erlang:is_tuple(Tuple) -> inspect@tuple(Tuple);
+        Function when erlang:is_function(Function) -> inspect@function(Function);
+        Any -> ["//erl(", io_lib:format("~p", [Any]), ")"]
+    end.
+
+inspect@bit_array(Bits) ->
+    Pieces = inspect@bit_array_pieces(Bits, []),
+    Inner = lists:join(", ", lists:reverse(Pieces)),
+    ["<<", Inner, ">>"].
+
+inspect@bit_array_pieces(Bits, Acc) ->
+    case Bits of
+        <<>> ->
+            Acc;
+        <<Byte, Rest/bitstring>> ->
+            inspect@bit_array_pieces(Rest, [erlang:integer_to_binary(Byte) | Acc]);
+        _ ->
+            Size = erlang:bit_size(Bits),
+            <<RemainingBits:Size>> = Bits,
+            SizeString = [":size(", erlang:integer_to_binary(Size), ")"],
+            Piece = [erlang:integer_to_binary(RemainingBits), SizeString],
+            [Piece | Acc]
+    end.
+
+inspect@binary(Binary) ->
+    case inspect@maybe_utf8_string(Binary, <<>>) of
+        {ok, InspectedUtf8String} ->
+            InspectedUtf8String;
+        {error, not_a_utf8_string} ->
+            Segments = [erlang:integer_to_list(X) || <<X>> <= Binary],
+            ["<<", lists:join(", ", Segments), ">>"]
+    end.
+
+inspect@atom(Atom) ->
+    Binary = erlang:atom_to_binary(Atom),
+    case inspect@maybe_gleam_atom(Binary, none, <<>>) of
+        {ok, Inspected} -> Inspected;
+        {error, _} -> ["atom.create(\"", Binary, "\")"]
+    end.
+
+inspect@list(List) ->
+    case inspect@list_loop(List, true) of
+        {charlist, _} -> ["charlist.from_string(\"", erlang:list_to_binary(List), "\")"];
+        {proper, Elements} -> ["[", Elements, "]"];
+        {improper, Elements} -> ["//erl([", Elements, "])"]
+    end.
+
+inspect@map(Map) ->
+    Fields = [
+        [<<"#(">>, echo@inspect(Key), <<", ">>, echo@inspect(Value), <<")">>]
+        || {Key, Value} <- maps:to_list(Map)
+    ],
+    ["dict.from_list([", lists:join(", ", Fields), "])"].
+
+inspect@record(Record) ->
+    [Atom | ArgsList] = Tuple = erlang:tuple_to_list(Record),
+    case inspect@maybe_gleam_atom(Atom, none, <<>>) of
+        {ok, Tag} ->
+            Args = lists:join(", ", lists:map(fun echo@inspect/1, ArgsList)),
+            [Tag, "(", Args, ")"];
+        _ ->
+            inspect@tuple(Tuple)
+    end.
+
+inspect@tuple(Tuple) when erlang:is_tuple(Tuple) ->
+    inspect@tuple(erlang:tuple_to_list(Tuple));
+inspect@tuple(Tuple) ->
+    Elements = lists:map(fun echo@inspect/1, Tuple),
+    ["#(", lists:join(", ", Elements), ")"].
+
+inspect@function(Function) ->
+    {arity, Arity} = erlang:fun_info(Function, arity),
+    ArgsAsciiCodes = lists:seq($a, $a + Arity - 1),
+    Args = lists:join(", ", lists:map(fun(Arg) -> <<Arg>> end, ArgsAsciiCodes)),
+    ["//fn(", Args, ") { ... }"].
+
+inspect@maybe_utf8_string(Binary, Acc) ->
+    case Binary of
+        <<>> ->
+            {ok, <<$", Acc/binary, $">>};
+        <<First/utf8, Rest/binary>> ->
+            Escaped = inspect@escape_grapheme(First),
+            inspect@maybe_utf8_string(Rest, <<Acc/binary, Escaped/binary>>);
+        _ ->
+            {error, not_a_utf8_string}
+    end.
+
+inspect@escape_grapheme(Char) ->
+    case Char of
+        $" -> <<$\\, $">>;
+        $\\ -> <<$\\, $\\>>;
+        $\r -> <<$\\, $r>>;
+        $\n -> <<$\\, $n>>;
+        $\t -> <<$\\, $t>>;
+        $\f -> <<$\\, $f>>;
+        X when X > 126, X < 160 -> inspect@convert_to_u(X);
+        X when X < 32 -> inspect@convert_to_u(X);
+        Other -> <<Other/utf8>>
+    end.
+
+inspect@convert_to_u(Code) ->
+    erlang:list_to_binary(io_lib:format("\\u{~4.16.0B}", [Code])).
+
+inspect@list_loop(List, Ascii) ->
+    case List of
+        [] ->
+            {proper, []};
+        [First] when Ascii andalso ?is_ascii_character(First) ->
+            {charlist, nil};
+        [First] ->
+            {proper, [echo@inspect(First)]};
+        [First | Rest] when erlang:is_list(Rest) ->
+            StillAscii = Ascii andalso ?is_ascii_character(First),
+            {Kind, Inspected} = inspect@list_loop(Rest, StillAscii),
+            {Kind, [echo@inspect(First), ", " | Inspected]};
+        [First | ImproperRest] ->
+            {improper, [echo@inspect(First), " | ", echo@inspect(ImproperRest)]}
+    end.
+
+inspect@maybe_gleam_atom(Atom, PrevChar, Acc) when erlang:is_atom(Atom) ->
+    Binary = erlang:atom_to_binary(Atom),
+    inspect@maybe_gleam_atom(Binary, PrevChar, Acc);
+inspect@maybe_gleam_atom(Atom, PrevChar, Acc) ->
+    case {Atom, PrevChar} of
+        {<<>>, none} ->
+            {error, nil};
+        {<<First, _/binary>>, none} when ?is_digit_char(First) ->
+            {error, nil};
+        {<<"_", _/binary>>, none} ->
+            {error, nil};
+        {<<"_">>, _} ->
+            {error, nil};
+        {<<"_", _/binary>>, $_} ->
+            {error, nil};
+        {<<First, _/binary>>, _} when not ?is_atom_char(First) ->
+            {error, nil};
+        {<<First, Rest/binary>>, none} ->
+            inspect@maybe_gleam_atom(Rest, First, <<Acc/binary, (inspect@uppercase(First))>>);
+        {<<"_", Rest/binary>>, _} ->
+            inspect@maybe_gleam_atom(Rest, $_, Acc);
+        {<<First, Rest/binary>>, $_} ->
+            inspect@maybe_gleam_atom(Rest, First, <<Acc/binary, (inspect@uppercase(First))>>);
+        {<<First, Rest/binary>>, _} ->
+            inspect@maybe_gleam_atom(Rest, First, <<Acc/binary, First>>);
+        {<<>>, _} ->
+            {ok, Acc};
+        _ ->
+            erlang:throw({gleam_error, echo, Atom, PrevChar, Acc})
+    end.
+
+inspect@uppercase(X) -> X - 32.
+

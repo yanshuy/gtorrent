@@ -17,6 +17,7 @@ pub fn main() {
 }
 
 pub fn execute(args: List(String)) {
+  start([Inets])
   case execute_cmd(args) {
     Ok(_) -> Nil
     Error(err) -> {
@@ -61,6 +62,13 @@ pub fn execute_cmd(args: List(String)) -> Result(Nil, CmdError) {
         _ -> Error(InsufficientArguments("download_piece"))
       }
 
+    ["download", ..rest] ->
+      case rest {
+        ["-o", download_path, torrent_file] ->
+          cmd_download(download_path, torrent_file)
+        _ -> Error(InsufficientArguments("download_piece"))
+      }
+
     [command, ..] -> Error(UnknownCommand(command))
   }
 }
@@ -70,7 +78,7 @@ pub type CmdError {
   InvalidArguments
   InsufficientArguments(String)
   InvalidPieceIndex(Int)
-  AppStartError(StartError)
+
   FileError(simplifile.FileError)
   DecodeError(bencode.DecodeError)
   TrackerError(tracker.TrackerError)
@@ -88,11 +96,15 @@ fn cmd_decode(encode_str: String) -> Result(Nil, CmdError) {
   Ok(Nil)
 }
 
-fn cmd_info(filename: String) -> Result(Nil, CmdError) {
+fn info(filename: String) -> Result(bencode.Torrent, CmdError) {
   use bits <- try(simplifile.read_bits(filename) |> map_error(FileError))
   use data <- try(bencode.decode(bits) |> map_error(DecodeError))
 
-  use torrent <- try(bencode.parse_torrent(data) |> map_error(DecodeError))
+  bencode.parse_torrent(data) |> map_error(DecodeError)
+}
+
+fn cmd_info(filename: String) -> Result(Nil, CmdError) {
+  use torrent <- try(info(filename))
 
   io.println("Tracker URL: " <> torrent.announce)
   io.println("Length: " <> int.to_string(torrent.length))
@@ -115,32 +127,21 @@ fn cmd_info(filename: String) -> Result(Nil, CmdError) {
 }
 
 fn cmd_peers(filename: String) -> Result(Nil, CmdError) {
-  use _ <- try(application_start(Inets) |> map_error(AppStartError))
-
   use peer_id <- try(load_peer_id() |> map_error(FileError))
 
-  use bits <- try(simplifile.read_bits(filename) |> map_error(FileError))
-  use data <- try(bencode.decode(bits) |> map_error(DecodeError))
-
-  use torrent <- try(bencode.parse_torrent(data) |> map_error(DecodeError))
+  use torrent <- try(info(filename))
   use peers <- try(
     tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
   )
-
   io.println(string.join(peers, with: "\n"))
   Ok(Nil)
 }
 
 fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
-  use _ <- try(application_start(Inets) |> map_error(AppStartError))
-
   use peer_id <- try(load_peer_id() |> map_error(FileError))
 
-  use bits <- try(simplifile.read_bits(filename) |> map_error(FileError))
-  use data <- try(bencode.decode(bits) |> map_error(DecodeError))
-
-  use torrent <- try(bencode.parse_torrent(data) |> map_error(DecodeError))
-  use peer_peer_id <- try(
+  use torrent <- try(info(filename))
+  use #(_, peer_peer_id) <- try(
     peer_protocol.handshake(endpoint, torrent, peer_id)
     |> map_error(PeerError),
   )
@@ -162,18 +163,12 @@ fn cmd_download_piece(
   use piece_index <- try(
     int.parse(piece_index_str) |> replace_error(InvalidArguments),
   )
-  use _ <- try(application_start(Inets) |> map_error(AppStartError))
-
   use peer_id <- try(load_peer_id() |> map_error(FileError))
+  use torrent <- try(info(torrent_file))
 
-  use bits <- try(simplifile.read_bits(torrent_file) |> map_error(FileError))
-  use data <- try(bencode.decode(bits) |> map_error(DecodeError))
-
-  use torrent <- try(bencode.parse_torrent(data) |> map_error(DecodeError))
   use peers <- try(
     tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
   )
-  let assert [endpoint, ..] = peers
 
   use piece_hash <- try(
     torrent.pieces
@@ -181,19 +176,31 @@ fn cmd_download_piece(
     |> list.first
     |> replace_error(InvalidPieceIndex(piece_index)),
   )
+  let assert [endpoint, ..] = peers
 
-  use piece <- try(
-    peer_protocol.one_piece(
-      torrent,
-      endpoint,
-      piece_index,
-      hash: piece_hash,
-      peer_id: peer_id,
-    )
+  let state = peer_protocol.new_peer(endpoint, download_path)
+  use #(socket, _) <- try(
+    peer_protocol.handshake(endpoint, torrent, peer_id)
     |> map_error(PeerError),
   )
+  peer_protocol.one_piece(socket, torrent, state, [piece_hash], piece_index)
+  |> map_error(PeerError)
+}
 
-  simplifile.write_bits(download_path, piece) |> map_error(FileError)
+fn cmd_download(
+  download_path: String,
+  torrent_file: String,
+) -> Result(Nil, CmdError) {
+  use peer_id <- try(load_peer_id() |> map_error(FileError))
+  use torrent <- try(info(torrent_file))
+
+  use peers <- try(
+    tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
+  )
+  let assert [endpoint, ..] = peers
+  let state = peer_protocol.new_peer(endpoint, download_path)
+  peer_protocol.fetch_pieces(torrent, state, peer_id)
+  |> map_error(PeerError)
 }
 
 fn load_peer_id() -> Result(BitArray, simplifile.FileError) {
@@ -215,7 +222,6 @@ fn describe_cmd_error(error: CmdError) {
     InsufficientArguments(command) ->
       "Insufficient arguments for `" <> command <> "`"
     InvalidPieceIndex(index) -> "Invalid piece index: " <> int.to_string(index)
-    AppStartError(StartError(reason)) -> reason
     FileError(err) -> simplifile.describe_error(err)
     DecodeError(err) -> bencode.describe_error(err)
     TrackerError(err) -> tracker.describe_error(err)
@@ -235,4 +241,16 @@ pub type Application {
 
 pub type StartError {
   StartError(reason: String)
+}
+
+fn start(apps: List(Application)) {
+  list.each(apps, fn(app) {
+    case application_start(app) {
+      Error(err) -> {
+        io.println_error(err.reason)
+        stop(1)
+      }
+      Ok(_) -> Nil
+    }
+  })
 }

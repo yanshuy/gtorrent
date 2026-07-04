@@ -2,11 +2,9 @@ import gleam/bit_array
 import gleam/crypto
 import gleam/dict
 import gleam/int
-import gleam/io
 import gleam/json
 import gleam/list
 import gleam/result.{try}
-import gleam/string
 import helpers
 
 pub type Bencode {
