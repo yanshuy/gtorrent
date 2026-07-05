@@ -2,12 +2,13 @@ import gleam/bit_array
 import gleam/bool
 import gleam/crypto
 import gleam/dict
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{map_error, replace_error, try}
 import mug
-import torrent/peer/event
-import torrent/protocol.{BitField, Choke, Have, Interested, Piece, Unchoke}
+import torrent/messages
+import torrent/peer/protocol.{BitField, Choke, Have, Interested, Piece, Unchoke}
 import torrent/torrent
 
 pub type PeerSession {
@@ -41,18 +42,17 @@ pub fn start(endpoint: protocol.Endpoint, coordinator, peer_id, info_hash) {
     protocol.handshake(socket, info_hash, peer_id) |> map_error(ProtocolError),
   )
   let session = new_session(socket, peer_id)
-  use bitfield <- try(receive_bitfield(session))
+  use session <- try(receive_bitfield(session))
 
-  let session = new_session(socket, peer_id)
-
-  process.send(coordinator, Ready(peer_id, bitfield, self()))
+  let worker = process.new_subject()
+  process.send(coordinator, messages.Ready(peer_id, worker, session.bitfield))
 
   peer_loop(session)
 }
 
 pub fn peer_loop(session: PeerSession) -> Result(PeerSession, PeerError) {
   case session {
-    PeerSession(piece: None, ..) -> lease_next_piece()
+    PeerSession(piece: None, ..) -> todo
     PeerSession(bitfield: <<0>>, ..) -> {
       use _ <- try(receive_bitfield(session))
       peer_listen(session)
@@ -82,18 +82,18 @@ fn peer_listen(session: PeerSession) -> Result(PeerSession, PeerError) {
   )
   echo protocol.log(message)
   case message {
-    Choke -> peer_exchange(PeerSession(..session, choked: True))
-    Unchoke -> peer_exchange(PeerSession(..session, choked: False))
-    Have -> peer_exchange(session)
+    Choke -> peer_loop(PeerSession(..session, choked: True))
+    Unchoke -> peer_loop(PeerSession(..session, choked: False))
+    Have -> peer_loop(session)
     BitField(bits) -> handle_bitfield(session, bits)
 
     Piece(_, _, _) -> {
       use piece <- try(handle_piece_block(session, message))
       case piece.pending_requests {
-        [_, ..] -> peer_exchange(session)
+        [_, ..] -> peer_loop(session)
         [] -> {
           use _ <- try(handle_piece_complete(piece))
-          peer_exchange(PeerSession(..session, piece: None))
+          peer_loop(PeerSession(..session, piece: None))
         }
       }
     }

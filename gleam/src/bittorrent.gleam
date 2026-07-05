@@ -193,12 +193,12 @@ fn cmd_download_piece(
   )
   let assert [endpoint, ..] = peers
 
-  let state = peer_protocol.new_peer(endpoint, download_path)
+  let state = protocol.new_peer(endpoint, download_path)
   use #(socket, _) <- try(
-    peer_protocol.handshake(endpoint, torrent, peer_id)
+    protocol.handshake(endpoint, torrent, peer_id)
     |> map_error(PeerError),
   )
-  peer_protocol.one_piece(socket, torrent, state, [piece_hash], piece_index)
+  protocol.one_piece(socket, torrent, state, [piece_hash], piece_index)
   |> map_error(PeerError)
 }
 

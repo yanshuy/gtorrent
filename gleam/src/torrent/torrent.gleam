@@ -6,7 +6,7 @@ import gleam/list
 import gleam/result.{try}
 import gleam/set
 import simplifile
-import torrent/protocol
+import torrent/peer/protocol
 
 pub type TorrentInfo {
   TorrentInfo(
