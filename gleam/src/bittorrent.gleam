@@ -8,6 +8,7 @@ import gleam/json
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
+import gleam/uri
 import simplifile
 import torrent/protocol
 import torrent/torrent
@@ -139,11 +140,11 @@ fn cmd_peers(filename: String) -> Result(Nil, CmdError) {
   Ok(Nil)
 }
 
-fn validate_endpoint(endpoint: String) -> Result(#(String, Int), Nil) {
+fn new_endpoint(endpoint: String) -> Result(protocol.Endpoint, Nil) {
   case string.split(endpoint, on: ":") {
     [ipv4, port_str] -> {
       use port <- try(int.parse(port_str))
-      Ok(#(ipv4, port))
+      Ok(protocol.Endpoint(ipv4, port))
     }
     _ -> Error(Nil)
   }
@@ -153,10 +154,8 @@ fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
   use torrent <- try(info(filename))
 
-  use #(ip4, port) <- try(
-    validate_endpoint(endpoint) |> replace_error(InvalidEndpoint),
-  )
-  use socket <- try(protocol.connect(ip4, port) |> map_error(ProtocolError))
+  use endpoint <- try(new_endpoint(endpoint) |> replace_error(InvalidEndpoint))
+  use socket <- try(protocol.connect(endpoint) |> map_error(ProtocolError))
   use peer_peer_id <- try(
     protocol.handshake(socket, torrent.info_hash, peer_id)
     |> map_error(ProtocolError),
@@ -231,14 +230,6 @@ fn load_peer_id() -> Result(BitArray, simplifile.FileError) {
   }
 }
 
-pub type Endpoint {
-  Endpoint(ip4: String, port: Int)
-}
-
-fn new_endpoint(endpoint: String) -> Endpoint {
-  todo
-}
-
 fn describe_cmd_error(error: CmdError) {
   case error {
     UnknownCommand(command) -> "Unknown command: " <> command
@@ -250,7 +241,7 @@ fn describe_cmd_error(error: CmdError) {
     FileError(err) -> simplifile.describe_error(err)
     DecodeError(err) -> bencode.describe_error(err)
     TrackerError(err) -> tracker.describe_error(err)
-    PeerError(err) -> peer_protocol.describe_error(err)
+    PeerError(err) -> protocol.describe_error(err)
   }
 }
 

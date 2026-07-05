@@ -1,35 +1,29 @@
+import gleam/dict
 import gleam/erlang/process
 import simplifile
 import torrent/file_io
-import torrent/torrent
-
-// import torrent/peer_session
+import torrent/messages.{PeerDisconnected, PieceCompleted, Ready}
 import torrent/protocol
+import torrent/torrent
 
 pub type DownloadState {
   DownloadState(
     torrent: torrent.TorrentInfo,
-    peers: dict.Dict(protocol.PeerId, process.Subject(peer_session.WorkerCmd)),
+    peers: dict.Dict(protocol.PeerId, process.Subject(messages.WorkerCmd)),
     writer: file_io.Writer,
   )
 }
 
-pub type PeerEvent {
-  Ready(peer: protocol.PeerId, worker: process.Subject(peer_session.WorkerCmd))
-  PieceCompleted(peer: protocol.PeerId, index: Int, data: BitArray)
-  PeerDisconnected(protocol.PeerId)
-}
-
 fn downlaod(
   state: DownloadState,
-  mailbox: process.Subject(PeerEvent),
+  mailbox: process.Subject(messages.PeerEvent),
 ) -> Result(Nil, TorrentError) {
   //wait for mailbox
 
   case process.receive(mailbox, within: 5000) {
     Ok(event) -> {
       case event {
-        Ready(peer:, worker:) -> todo
+        Ready(peer:, worker:, bitfield:) -> todo
         PieceCompleted(peer:, index:, data:) -> todo
         PeerDisconnected(_) -> todo
       }

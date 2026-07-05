@@ -6,6 +6,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{map_error, replace_error, try}
 import mug
+import torrent/peer/event
 import torrent/protocol.{BitField, Choke, Have, Interested, Piece, Unchoke}
 import torrent/torrent
 
@@ -13,33 +14,36 @@ pub type PeerSession {
   PeerSession(
     socket: mug.Socket,
     peer_id: protocol.PeerId,
-    bit_field: BitArray,
+    bitfield: BitArray,
     piece: Option(torrent.PieceDownload),
     choked: Bool,
     interested: Bool,
   )
 }
 
-pub fn new_session(endpoint: String) -> PeerSession {
-  use socket <- try(protocol.connect(ip4, port) |> map_error(ProtocolError))
-  use peer_id <- try(
-    protocol.handshake(socket, info_hash, peer_id) |> map_error(ProtocolError),
-  )
+pub fn new_session(
+  socket: mug.Socket,
+  peer_id: protocol.PeerId,
+) -> PeerSession {
   PeerSession(
     socket,
     peer_id,
-    bit_field: <<0>>,
+    bitfield: <<0>>,
     piece: None,
     choked: True,
     interested: False,
   )
 }
 
-pub fn start(ip4: String, port: Int, coordinator, peer_id, info_hash) {
+pub fn start(endpoint: protocol.Endpoint, coordinator, peer_id, info_hash) {
+  use socket <- try(protocol.connect(endpoint) |> map_error(ProtocolError))
+  use peer_id <- try(
+    protocol.handshake(socket, info_hash, peer_id) |> map_error(ProtocolError),
+  )
   let session = new_session(socket, peer_id)
   use bitfield <- try(receive_bitfield(session))
 
-  let session = new_session(socket, peer_id, bitfield)
+  let session = new_session(socket, peer_id)
 
   process.send(coordinator, Ready(peer_id, bitfield, self()))
 
@@ -49,7 +53,7 @@ pub fn start(ip4: String, port: Int, coordinator, peer_id, info_hash) {
 pub fn peer_loop(session: PeerSession) -> Result(PeerSession, PeerError) {
   case session {
     PeerSession(piece: None, ..) -> lease_next_piece()
-    PeerSession(bit_field: <<0>>, ..) -> {
+    PeerSession(bitfield: <<0>>, ..) -> {
       use _ <- try(receive_bitfield(session))
       peer_listen(session)
     }
@@ -67,7 +71,7 @@ fn receive_bitfield(session: PeerSession) -> Result(PeerSession, PeerError) {
     protocol.receive_message(session.socket) |> result.map_error(ProtocolError),
   )
   case message {
-    BitField(bits) -> Ok(PeerSession(..session, bit_field: bits))
+    BitField(bits) -> Ok(PeerSession(..session, bitfield: bits))
     _ -> receive_bitfield(session)
   }
 }
@@ -81,7 +85,7 @@ fn peer_listen(session: PeerSession) -> Result(PeerSession, PeerError) {
     Choke -> peer_exchange(PeerSession(..session, choked: True))
     Unchoke -> peer_exchange(PeerSession(..session, choked: False))
     Have -> peer_exchange(session)
-    BitField(bits) -> handle_bit_field(session, bits)
+    BitField(bits) -> handle_bitfield(session, bits)
 
     Piece(_, _, _) -> {
       use piece <- try(handle_piece_block(session, message))
@@ -104,15 +108,15 @@ fn handle_piece_complete(piece: torrent.PieceDownload) {
   todo
 }
 
-fn handle_bit_field(
+fn handle_bitfield(
   session: PeerSession,
-  bit_field: BitArray,
+  bitfield: BitArray,
 ) -> Result(PeerSession, PeerError) {
   use <- bool.guard(
-    is_any_bit_set(session.bit_field),
+    is_any_bit_set(session.bitfield),
     return: Error(DuplicateBitfield),
   )
-  case is_any_bit_set(bit_field) {
+  case is_any_bit_set(bitfield) {
     True -> {
       let id = protocol.message_id(Interested)
       let message = <<1:big-size(4)-unit(8), id:int>>

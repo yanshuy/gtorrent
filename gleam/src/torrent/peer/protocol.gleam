@@ -20,10 +20,14 @@ pub type PeerId {
 
 const message_timeout = 5000
 
-pub fn connect(host: String, port: Int) -> Result(mug.Socket, ProtocolError) {
+pub type Endpoint {
+  Endpoint(ip4: String, port: Int)
+}
+
+pub fn connect(endpoint: Endpoint) -> Result(mug.Socket, ProtocolError) {
   mug.connect(ConnectionOptions(
-    host: host,
-    port: port,
+    host: endpoint.ip4,
+    port: endpoint.port,
     timeout: message_timeout,
     ip_version_preference: mug.Ipv4Only,
   ))
