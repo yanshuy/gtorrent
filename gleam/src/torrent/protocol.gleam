@@ -1,0 +1,169 @@
+import gleam/int
+import gleam/option.{None, Some}
+import gleam/result.{map_error, replace_error, try}
+import mug.{ConnectionOptions}
+
+pub type PeerMessage {
+  Choke
+  Unchoke
+  Interested
+  NotInterested
+  Have
+  BitField(BitArray)
+  Request(piece_index: Int, begin: Int, length: Int)
+  Piece(piece_index: Int, begin: Int, block: BitArray)
+}
+
+pub type PeerId {
+  PeerId(BitArray)
+}
+
+const message_timeout = 5000
+
+pub fn connect(host: String, port: Int) -> Result(mug.Socket, ProtocolError) {
+  mug.connect(ConnectionOptions(
+    host: host,
+    port: port,
+    timeout: message_timeout,
+    ip_version_preference: mug.Ipv4Only,
+  ))
+  |> map_error(fn(err) {
+    case err {
+      mug.ConnectFailedIpv4(err) -> TCPError(err)
+      _ -> panic
+    }
+  })
+}
+
+pub fn handshake(
+  socket: mug.Socket,
+  info_hash: BitArray,
+  peer_id: BitArray,
+) -> Result(PeerId, ProtocolError) {
+  let handshake_msg = <<
+    19:int,
+    "BitTorrent protocol",
+    0:size(8)-unit(8),
+    info_hash:bits,
+    peer_id:bits,
+  >>
+  use _ <- try(mug.send(socket, handshake_msg) |> map_error(TCPError))
+
+  use handshake_back <- try(
+    mug.receive_exact(socket, 20 + 8 + 20 + 20, message_timeout)
+    |> map_error(TCPError),
+  )
+  case handshake_back {
+    <<
+      19:int,
+      "BitTorrent protocol",
+      _:size(8)-unit(8),
+      rev_info_hash:bytes-size(20)-unit(8),
+      peer_id:bytes-size(20)-unit(8),
+    >> -> {
+      case rev_info_hash == info_hash {
+        True -> Ok(PeerId(peer_id))
+        False -> Error(InfoHashMismatch)
+      }
+    }
+    _ -> Error(InvalidResponse)
+  }
+}
+
+pub fn log(m: PeerMessage) {
+  case m {
+    Piece(_, _, _) -> Piece(..m, block: <<>>)
+    _ -> m
+  }
+}
+
+pub fn send_message(
+  socket: mug.Socket,
+  message: BitArray,
+) -> Result(Nil, ProtocolError) {
+  mug.send(socket, message) |> map_error(TCPError)
+}
+
+pub fn receive_message(
+  socket: mug.Socket,
+) -> Result(PeerMessage, ProtocolError) {
+  use bits <- try(
+    mug.receive_exact(socket, 4, message_timeout) |> map_error(TCPError),
+  )
+  let assert <<message_length:unsigned-big-size(4 * 8)>> = bits
+
+  case message_length {
+    // keep alive
+    0 -> receive_message(socket)
+    _ -> {
+      use message <- try(
+        mug.receive_exact(socket, message_length, message_timeout)
+        |> map_error(TCPError),
+      )
+      parse_message(message)
+    }
+  }
+}
+
+fn parse_message(message: BitArray) -> Result(PeerMessage, ProtocolError) {
+  let assert <<message_id, payload:bits>> = message
+  case message_id {
+    0 -> Ok(Choke)
+    1 -> Ok(Unchoke)
+    2 -> Ok(Interested)
+    3 -> Ok(NotInterested)
+    4 -> Ok(Have)
+    5 -> Ok(BitField(payload))
+    6 -> {
+      let assert <<
+        piece_index:big-size(4)-unit(8),
+        begin:big-size(4)-unit(8),
+        length:big-size(4)-unit(8),
+      >> = payload
+      Ok(Request(piece_index, begin, length))
+    }
+    7 -> {
+      let assert <<
+        piece_index:big-size(4)-unit(8),
+        begin:big-size(4)-unit(8),
+        block:bits,
+      >> = payload
+      Ok(Piece(piece_index, begin, block))
+    }
+    id -> Error(UnknownMessageId(id))
+  }
+}
+
+pub fn message_id(message: PeerMessage) -> Int {
+  case message {
+    Choke -> 0
+    Unchoke -> 1
+    Interested -> 2
+    NotInterested -> 3
+    Have -> 4
+    BitField(_) -> 5
+    Request(_, _, _) -> 6
+    Piece(_, _, _) -> 7
+  }
+}
+
+pub type ProtocolError {
+  InvalidResponse
+  InfoHashMismatch
+  TCPError(mug.Error)
+  UnknownMessageId(Int)
+  UnexpectedMessage(Int)
+  ProtocolErrorMsg(String)
+}
+
+pub fn describe_error(error: ProtocolError) -> String {
+  case error {
+    InvalidResponse -> "Received an invalid response from the peer"
+    InfoHashMismatch -> "Peer responded with a different info hash"
+    TCPError(err) -> mug.describe_error(err)
+    ProtocolErrorMsg(err) -> err
+    UnknownMessageId(msg_id) -> "Unknown Message Id " <> int.to_string(msg_id)
+    UnexpectedMessage(msg_id) ->
+      "Unexpected peer message: " <> int.to_string(msg_id)
+  }
+}

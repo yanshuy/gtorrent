@@ -8,16 +8,17 @@ import gleam/option
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
 import helpers
+import torrent/torrent
 
 pub type TrackerError {
   InvalidUrl
   HttpError(httpc.HttpError)
-  DecodeError(bencode.DecodeError)
+  DecodeError(bencode.BencodeError)
   InvalidResponse(String)
 }
 
 pub fn get_peers(
-  torrent: bencode.Torrent,
+  torrent: torrent.TorrentInfo,
   peer_id: BitArray,
 ) -> Result(List(String), TrackerError) {
   use req <- try(request.to(torrent.announce) |> replace_error(InvalidUrl))
@@ -54,7 +55,7 @@ fn decode_peers(
 }
 
 fn construct_query_string(
-  torrent: bencode.Torrent,
+  torrent: torrent.TorrentInfo,
   peer_id: BitArray,
 ) -> Result(String, TrackerError) {
   let encoded = torrent.info_hash |> helpers.percent_encode

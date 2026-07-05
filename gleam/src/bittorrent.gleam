@@ -8,8 +8,9 @@ import gleam/json
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
-import peer_protocol
 import simplifile
+import torrent/protocol
+import torrent/torrent
 import tracker
 
 pub fn main() {
@@ -78,11 +79,12 @@ pub type CmdError {
   InvalidArguments
   InsufficientArguments(String)
   InvalidPieceIndex(Int)
+  InvalidEndpoint
 
   FileError(simplifile.FileError)
-  DecodeError(bencode.DecodeError)
+  DecodeError(bencode.BencodeError)
   TrackerError(tracker.TrackerError)
-  PeerError(peer_protocol.ProtocolError)
+  ProtocolError(protocol.ProtocolError)
 }
 
 fn cmd_decode(encode_str: String) -> Result(Nil, CmdError) {
@@ -96,11 +98,11 @@ fn cmd_decode(encode_str: String) -> Result(Nil, CmdError) {
   Ok(Nil)
 }
 
-fn info(filename: String) -> Result(bencode.Torrent, CmdError) {
+fn info(filename: String) -> Result(torrent.TorrentInfo, CmdError) {
   use bits <- try(simplifile.read_bits(filename) |> map_error(FileError))
   use data <- try(bencode.decode(bits) |> map_error(DecodeError))
 
-  bencode.parse_torrent(data) |> map_error(DecodeError)
+  torrent.parse(data) |> map_error(DecodeError)
 }
 
 fn cmd_info(filename: String) -> Result(Nil, CmdError) {
@@ -137,15 +139,29 @@ fn cmd_peers(filename: String) -> Result(Nil, CmdError) {
   Ok(Nil)
 }
 
+fn validate_endpoint(endpoint: String) -> Result(#(String, Int), Nil) {
+  case string.split(endpoint, on: ":") {
+    [ipv4, port_str] -> {
+      use port <- try(int.parse(port_str))
+      Ok(#(ipv4, port))
+    }
+    _ -> Error(Nil)
+  }
+}
+
 fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
-
   use torrent <- try(info(filename))
-  use session <- try(
-    peer_protocol.handshake(endpoint, torrent.info_hash, peer_id)
-    |> map_error(PeerError),
+
+  use #(ip4, port) <- try(
+    validate_endpoint(endpoint) |> replace_error(InvalidEndpoint),
   )
-  let peer_protocol.PeerId(id) = session.peer_id
+  use socket <- try(protocol.connect(ip4, port) |> map_error(ProtocolError))
+  use peer_peer_id <- try(
+    protocol.handshake(socket, torrent.info_hash, peer_id)
+    |> map_error(ProtocolError),
+  )
+  let protocol.PeerId(id) = peer_peer_id
   io.println(
     "Peer ID: "
     <> id
@@ -215,12 +231,21 @@ fn load_peer_id() -> Result(BitArray, simplifile.FileError) {
   }
 }
 
+pub type Endpoint {
+  Endpoint(ip4: String, port: Int)
+}
+
+fn new_endpoint(endpoint: String) -> Endpoint {
+  todo
+}
+
 fn describe_cmd_error(error: CmdError) {
   case error {
     UnknownCommand(command) -> "Unknown command: " <> command
     InvalidArguments -> "Usage: your_program.sh <command> <args>"
     InsufficientArguments(command) ->
       "Insufficient arguments for `" <> command <> "`"
+    InvalidEndpoint -> "Invalid endpoint. Expected <ip>:<port>."
     InvalidPieceIndex(index) -> "Invalid piece index: " <> int.to_string(index)
     FileError(err) -> simplifile.describe_error(err)
     DecodeError(err) -> bencode.describe_error(err)

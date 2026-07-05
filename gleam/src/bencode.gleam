@@ -1,5 +1,4 @@
 import gleam/bit_array
-import gleam/crypto
 import gleam/dict
 import gleam/int
 import gleam/json
@@ -14,7 +13,7 @@ pub type Bencode {
   BInteger(Int)
 }
 
-pub type DecodeError {
+pub type BencodeError {
   UnexpectedEof
   InvalidInteger
   InvalidStringLength
@@ -25,12 +24,12 @@ pub type DecodeError {
   NoColon
 }
 
-pub fn decode(encoded_value: BitArray) -> Result(Bencode, DecodeError) {
+pub fn decode(encoded_value: BitArray) -> Result(Bencode, BencodeError) {
   use #(value, _) <- try(decode_loop(encoded_value))
   Ok(value)
 }
 
-fn decode_loop(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
+fn decode_loop(bits: BitArray) -> Result(#(Bencode, BitArray), BencodeError) {
   case bits {
     <<"i":utf8, rest:bits>> -> decode_integer(rest)
 
@@ -45,7 +44,7 @@ fn decode_loop(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
   }
 }
 
-fn decode_string(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
+fn decode_string(bits: BitArray) -> Result(#(Bencode, BitArray), BencodeError) {
   use #(bits, rest) <- try(
     helpers.take_until(bits, ":")
     |> result.replace_error(NoColon),
@@ -73,7 +72,9 @@ fn decode_string(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
   Ok(#(BString(string_bits), rem))
 }
 
-fn decode_integer(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
+fn decode_integer(
+  bits: BitArray,
+) -> Result(#(Bencode, BitArray), BencodeError) {
   use #(bits, rest) <- try(
     helpers.take_until(bits, "e")
     |> result.replace_error(InvalidInteger),
@@ -89,7 +90,7 @@ fn decode_integer(bits: BitArray) -> Result(#(Bencode, BitArray), DecodeError) {
 fn decode_list(
   bits: BitArray,
   list: List(Bencode),
-) -> Result(#(Bencode, BitArray), DecodeError) {
+) -> Result(#(Bencode, BitArray), BencodeError) {
   case bits {
     <<"e":utf8, rest:bits>> -> {
       let blist = BList(list.reverse(list))
@@ -105,7 +106,7 @@ fn decode_list(
 fn decode_dictionary(
   bits: BitArray,
   entries: List(#(String, Bencode)),
-) -> Result(#(Bencode, BitArray), DecodeError) {
+) -> Result(#(Bencode, BitArray), BencodeError) {
   case bits {
     <<"e":utf8, rest:bits>> -> {
       let bdict = BDict(list.reverse(entries))
@@ -188,46 +189,9 @@ pub fn to_json(value: Bencode) -> json.Json {
   }
 }
 
-pub type Torrent {
-  Torrent(
-    name: String,
-    announce: String,
-    length: Int,
-    piece_length: Int,
-    pieces: List(BitArray),
-    info_hash: BitArray,
-  )
-}
-
-pub fn parse_torrent(torrent: Bencode) -> Result(Torrent, DecodeError) {
-  use dict <- try(dict(torrent))
-  let name = get_string(dict, "name") |> result.unwrap("Unknown")
-  use tracker <- try(get_string(dict, "announce"))
-
-  use info_entries <- try(get_entries(dict, "info"))
-  let info_dict = dict.from_list(info_entries)
-
-  // use length <- try(get_int(info_dict, "length"))
-  let length = get_int(info_dict, "length") |> result.unwrap(0)
-
-  use piece_length <- try(get_int(info_dict, "piece length"))
-  use pieces <- try(get_string_bits(info_dict, "pieces"))
-
-  let piece_hashes = split_piece_hashes(pieces, [])
-
-  Ok(Torrent(
-    name: name,
-    announce: tracker,
-    length: length,
-    piece_length: piece_length,
-    pieces: piece_hashes,
-    info_hash: digest_entries(info_entries),
-  ))
-}
-
 pub fn dict(
   meta_info: Bencode,
-) -> Result(dict.Dict(String, Bencode), DecodeError) {
+) -> Result(dict.Dict(String, Bencode), BencodeError) {
   case meta_info {
     BDict(entries) -> {
       let dict = dict.from_list(entries)
@@ -237,29 +201,10 @@ pub fn dict(
   }
 }
 
-pub fn digest_entries(info_entries: List(#(String, Bencode))) {
-  let bits = BDict(info_entries) |> encode
-  crypto.hash(crypto.Sha1, bits)
-}
-
-pub fn split_piece_hashes(
-  bits: BitArray,
-  acc: List(BitArray),
-) -> List(BitArray) {
-  case bits {
-    <<>> -> list.reverse(acc)
-
-    <<first:bytes-size(20), rest:bits>> ->
-      split_piece_hashes(rest, [first, ..acc])
-
-    _ -> acc
-  }
-}
-
 pub fn get_value(
   torrent: dict.Dict(String, Bencode),
   key: String,
-) -> Result(Bencode, DecodeError) {
+) -> Result(Bencode, BencodeError) {
   dict.get(torrent, key)
   |> result.replace_error(MissingKey(key))
 }
@@ -267,7 +212,7 @@ pub fn get_value(
 pub fn get_string(
   torrent: dict.Dict(String, Bencode),
   key: String,
-) -> Result(String, DecodeError) {
+) -> Result(String, BencodeError) {
   use value <- try(get_value(torrent, key))
 
   let error = InvalidTorrent("Expected utf8 string for key: " <> key)
@@ -282,7 +227,7 @@ pub fn get_string(
 pub fn get_string_bits(
   torrent: dict.Dict(String, Bencode),
   key: String,
-) -> Result(BitArray, DecodeError) {
+) -> Result(BitArray, BencodeError) {
   use value <- try(get_value(torrent, key))
 
   let error = InvalidTorrent("Expected string for key: " <> key)
@@ -295,7 +240,7 @@ pub fn get_string_bits(
 pub fn get_int(
   torrent: dict.Dict(String, Bencode),
   key: String,
-) -> Result(Int, DecodeError) {
+) -> Result(Int, BencodeError) {
   use value <- try(get_value(torrent, key))
 
   case value {
@@ -307,7 +252,7 @@ pub fn get_int(
 pub fn get_entries(
   torrent: dict.Dict(String, Bencode),
   key: String,
-) -> Result(List(#(String, Bencode)), DecodeError) {
+) -> Result(List(#(String, Bencode)), BencodeError) {
   use value <- try(get_value(torrent, key))
 
   case value {
@@ -316,7 +261,7 @@ pub fn get_entries(
   }
 }
 
-pub fn describe_error(error: DecodeError) -> String {
+pub fn describe_error(error: BencodeError) -> String {
   case error {
     UnexpectedEof -> "Unexpected end of input"
     InvalidInteger -> "Invalid integer"
