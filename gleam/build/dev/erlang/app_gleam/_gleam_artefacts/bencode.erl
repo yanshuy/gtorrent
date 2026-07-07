@@ -1,15 +1,15 @@
 -module(bencode).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/bencode.gleam").
--export([decode/1, encode/1, to_json/1, digest_entries/1, split_piece_hashes/2, dict/1, get_value/2, get_string_bits/2, get_int/2, get_entries/2, get_string/2, parse_torrent/1, describe_error/1]).
--export_type([bencode/0, decode_error/0, torrent/0]).
+-export([decode/1, encode/1, to_json/1, dict/1, get_value/2, get_string/2, get_string_bits/2, get_int/2, get_entries/2, describe_error/1]).
+-export_type([bencode/0, bencode_error/0]).
 
 -type bencode() :: {b_dict, list({binary(), bencode()})} |
     {b_list, list(bencode())} |
     {b_string, bitstring()} |
     {b_integer, integer()}.
 
--type decode_error() :: unexpected_eof |
+-type bencode_error() :: unexpected_eof |
     invalid_integer |
     invalid_string_length |
     invalid_utf8 |
@@ -18,17 +18,9 @@
     {invalid_torrent, binary()} |
     no_colon.
 
--type torrent() :: {torrent,
-        binary(),
-        binary(),
-        integer(),
-        integer(),
-        list(bitstring()),
-        bitstring()}.
-
--file("src/bencode.gleam", 48).
+-file("src/bencode.gleam", 47).
 -spec decode_string(bitstring()) -> {ok, {bencode(), bitstring()}} |
-    {error, decode_error()}.
+    {error, bencode_error()}.
 decode_string(Bits) ->
     gleam@result:'try'(
         begin
@@ -91,9 +83,9 @@ decode_string(Bits) ->
         end
     ).
 
--file("src/bencode.gleam", 76).
+-file("src/bencode.gleam", 75).
 -spec decode_integer(bitstring()) -> {ok, {bencode(), bitstring()}} |
-    {error, decode_error()}.
+    {error, bencode_error()}.
 decode_integer(Bits) ->
     gleam@result:'try'(
         begin
@@ -110,12 +102,12 @@ decode_integer(Bits) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"bencode"/utf8>>,
                                 function => <<"decode_integer"/utf8>>,
-                                line => 82,
+                                line => 83,
                                 value => _assert_fail,
-                                start => 1904,
-                                'end' => 1950,
-                                pattern_start => 1915,
-                                pattern_end => 1922})
+                                start => 1894,
+                                'end' => 1940,
+                                pattern_start => 1905,
+                                pattern_end => 1912})
             end,
             gleam@result:'try'(
                 begin
@@ -127,10 +119,10 @@ decode_integer(Bits) ->
         end
     ).
 
--file("src/bencode.gleam", 105).
+-file("src/bencode.gleam", 106).
 -spec decode_dictionary(bitstring(), list({binary(), bencode()})) -> {ok,
         {bencode(), bitstring()}} |
-    {error, decode_error()}.
+    {error, bencode_error()}.
 decode_dictionary(Bits, Entries) ->
     case Bits of
         <<"e"/utf8, Rest/bitstring>> ->
@@ -150,12 +142,12 @@ decode_dictionary(Bits, Entries) ->
                                         file => <<?FILEPATH/utf8>>,
                                         module => <<"bencode"/utf8>>,
                                         function => <<"decode_dictionary"/utf8>>,
-                                        line => 117,
+                                        line => 118,
                                         value => _assert_fail,
-                                        start => 2737,
-                                        'end' => 2774,
-                                        pattern_start => 2748,
-                                        pattern_end => 2765})
+                                        start => 2729,
+                                        'end' => 2766,
+                                        pattern_start => 2740,
+                                        pattern_end => 2757})
                     end,
                     Key@1 = case gleam@bit_array:to_string(Key_bits@1) of
                         {ok, Key} -> Key;
@@ -165,12 +157,12 @@ decode_dictionary(Bits, Entries) ->
                                         file => <<?FILEPATH/utf8>>,
                                         module => <<"bencode"/utf8>>,
                                         function => <<"decode_dictionary"/utf8>>,
-                                        line => 118,
+                                        line => 119,
                                         value => _assert_fail@1,
-                                        start => 2781,
-                                        'end' => 2831,
-                                        pattern_start => 2792,
-                                        pattern_end => 2799})
+                                        start => 2773,
+                                        'end' => 2823,
+                                        pattern_start => 2784,
+                                        pattern_end => 2791})
                     end,
                     gleam@result:'try'(
                         decode_loop(Rest@1),
@@ -186,10 +178,10 @@ decode_dictionary(Bits, Entries) ->
             )
     end.
 
--file("src/bencode.gleam", 89).
+-file("src/bencode.gleam", 90).
 -spec decode_list(bitstring(), list(bencode())) -> {ok,
         {bencode(), bitstring()}} |
-    {error, decode_error()}.
+    {error, bencode_error()}.
 decode_list(Bits, List) ->
     case Bits of
         <<"e"/utf8, Rest/bitstring>> ->
@@ -206,9 +198,9 @@ decode_list(Bits, List) ->
             )
     end.
 
--file("src/bencode.gleam", 33).
+-file("src/bencode.gleam", 32).
 -spec decode_loop(bitstring()) -> {ok, {bencode(), bitstring()}} |
-    {error, decode_error()}.
+    {error, bencode_error()}.
 decode_loop(Bits) ->
     case Bits of
         <<"i"/utf8, Rest/bitstring>> ->
@@ -233,8 +225,8 @@ decode_loop(Bits) ->
             {error, unexpected_eof}
     end.
 
--file("src/bencode.gleam", 28).
--spec decode(bitstring()) -> {ok, bencode()} | {error, decode_error()}.
+-file("src/bencode.gleam", 27).
+-spec decode(bitstring()) -> {ok, bencode()} | {error, bencode_error()}.
 decode(Encoded_value) ->
     gleam@result:'try'(
         decode_loop(Encoded_value),
@@ -244,7 +236,7 @@ decode(Encoded_value) ->
         end
     ).
 
--file("src/bencode.gleam", 161).
+-file("src/bencode.gleam", 162).
 -spec encode_entries(list({binary(), bencode()}), list(bitstring())) -> bitstring().
 encode_entries(Entries, Acc) ->
     case Entries of
@@ -258,7 +250,7 @@ encode_entries(Entries, Acc) ->
             encode_entries(Rest, [<<Key@1/bitstring, Value@1/bitstring>> | Acc])
     end.
 
--file("src/bencode.gleam", 148).
+-file("src/bencode.gleam", 149).
 -spec encode_list(list(bencode()), list(bitstring())) -> bitstring().
 encode_list(Values, Acc) ->
     case Values of
@@ -271,7 +263,7 @@ encode_list(Values, Acc) ->
             encode_list(Rest, [First | Acc])
     end.
 
--file("src/bencode.gleam", 127).
+-file("src/bencode.gleam", 128).
 -spec encode(bencode()) -> bitstring().
 encode(Value) ->
     case Value of
@@ -294,7 +286,7 @@ encode(Value) ->
             <<"d"/utf8, Entries@1/bitstring, "e"/utf8>>
     end.
 
--file("src/bencode.gleam", 178).
+-file("src/bencode.gleam", 179).
 -spec to_json(bencode()) -> gleam@json:json().
 to_json(Value) ->
     case Value of
@@ -321,12 +313,12 @@ to_json(Value) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"bencode"/utf8>>,
                                 function => <<"to_json"/utf8>>,
-                                line => 184,
+                                line => 185,
                                 value => _assert_fail,
-                                start => 4336,
-                                'end' => 4385,
-                                pattern_start => 4347,
-                                pattern_end => 4357})
+                                start => 4328,
+                                'end' => 4377,
+                                pattern_start => 4339,
+                                pattern_end => 4349})
             end,
             gleam@json:string(String@1);
 
@@ -334,32 +326,9 @@ to_json(Value) ->
             gleam@json:int(Integer)
     end.
 
--file("src/bencode.gleam", 240).
--spec digest_entries(list({binary(), bencode()})) -> bitstring().
-digest_entries(Info_entries) ->
-    Bits = begin
-        _pipe = {b_dict, Info_entries},
-        encode(_pipe)
-    end,
-    gleam@crypto:hash(sha1, Bits).
-
--file("src/bencode.gleam", 245).
--spec split_piece_hashes(bitstring(), list(bitstring())) -> list(bitstring()).
-split_piece_hashes(Bits, Acc) ->
-    case Bits of
-        <<>> ->
-            lists:reverse(Acc);
-
-        <<First:20/binary, Rest/bitstring>> ->
-            split_piece_hashes(Rest, [First | Acc]);
-
-        _ ->
-            Acc
-    end.
-
--file("src/bencode.gleam", 228).
+-file("src/bencode.gleam", 192).
 -spec dict(bencode()) -> {ok, gleam@dict:dict(binary(), bencode())} |
-    {error, decode_error()}.
+    {error, bencode_error()}.
 dict(Meta_info) ->
     case Meta_info of
         {b_dict, Entries} ->
@@ -370,67 +339,18 @@ dict(Meta_info) ->
             {error, {invalid_torrent, <<"Not valid"/utf8>>}}
     end.
 
--file("src/bencode.gleam", 259).
+-file("src/bencode.gleam", 204).
 -spec get_value(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
         bencode()} |
-    {error, decode_error()}.
+    {error, bencode_error()}.
 get_value(Torrent, Key) ->
     _pipe = gleam_stdlib:map_get(Torrent, Key),
     gleam@result:replace_error(_pipe, {missing_key, Key}).
 
--file("src/bencode.gleam", 282).
--spec get_string_bits(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
-        bitstring()} |
-    {error, decode_error()}.
-get_string_bits(Torrent, Key) ->
-    gleam@result:'try'(
-        get_value(Torrent, Key),
-        fun(Value) ->
-            Error = {invalid_torrent,
-                <<"Expected string for key: "/utf8, Key/binary>>},
-            case Value of
-                {b_string, Bits} ->
-                    {ok, Bits};
-
-                _ ->
-                    {error, Error}
-            end
-        end
-    ).
-
--file("src/bencode.gleam", 295).
--spec get_int(gleam@dict:dict(binary(), bencode()), binary()) -> {ok, integer()} |
-    {error, decode_error()}.
-get_int(Torrent, Key) ->
-    gleam@result:'try'(get_value(Torrent, Key), fun(Value) -> case Value of
-                {b_integer, Integer} ->
-                    {ok, Integer};
-
-                _ ->
-                    {error,
-                        {invalid_torrent,
-                            <<"Expected integer for key: "/utf8, Key/binary>>}}
-            end end).
-
--file("src/bencode.gleam", 307).
--spec get_entries(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
-        list({binary(), bencode()})} |
-    {error, decode_error()}.
-get_entries(Torrent, Key) ->
-    gleam@result:'try'(get_value(Torrent, Key), fun(Value) -> case Value of
-                {b_dict, Entries} ->
-                    {ok, Entries};
-
-                _ ->
-                    {error,
-                        {invalid_torrent,
-                            <<"Expected dictionary for key: "/utf8, Key/binary>>}}
-            end end).
-
--file("src/bencode.gleam", 267).
+-file("src/bencode.gleam", 212).
 -spec get_string(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
         binary()} |
-    {error, decode_error()}.
+    {error, bencode_error()}.
 get_string(Torrent, Key) ->
     gleam@result:'try'(
         get_value(Torrent, Key),
@@ -448,61 +368,57 @@ get_string(Torrent, Key) ->
         end
     ).
 
--file("src/bencode.gleam", 202).
--spec parse_torrent(bencode()) -> {ok, torrent()} | {error, decode_error()}.
-parse_torrent(Torrent) ->
+-file("src/bencode.gleam", 227).
+-spec get_string_bits(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
+        bitstring()} |
+    {error, bencode_error()}.
+get_string_bits(Torrent, Key) ->
     gleam@result:'try'(
-        dict(Torrent),
-        fun(Dict) ->
-            Name = begin
-                _pipe = get_string(Dict, <<"name"/utf8>>),
-                gleam@result:unwrap(_pipe, <<"Unknown"/utf8>>)
-            end,
-            gleam@result:'try'(
-                get_string(Dict, <<"announce"/utf8>>),
-                fun(Tracker) ->
-                    gleam@result:'try'(
-                        get_entries(Dict, <<"info"/utf8>>),
-                        fun(Info_entries) ->
-                            Info_dict = maps:from_list(Info_entries),
-                            Length = begin
-                                _pipe@1 = get_int(Info_dict, <<"length"/utf8>>),
-                                gleam@result:unwrap(_pipe@1, 0)
-                            end,
-                            gleam@result:'try'(
-                                get_int(Info_dict, <<"piece length"/utf8>>),
-                                fun(Piece_length) ->
-                                    gleam@result:'try'(
-                                        get_string_bits(
-                                            Info_dict,
-                                            <<"pieces"/utf8>>
-                                        ),
-                                        fun(Pieces) ->
-                                            Piece_hashes = split_piece_hashes(
-                                                Pieces,
-                                                []
-                                            ),
-                                            {ok,
-                                                {torrent,
-                                                    Name,
-                                                    Tracker,
-                                                    Length,
-                                                    Piece_length,
-                                                    Piece_hashes,
-                                                    digest_entries(Info_entries)}}
-                                        end
-                                    )
-                                end
-                            )
-                        end
-                    )
-                end
-            )
+        get_value(Torrent, Key),
+        fun(Value) ->
+            Error = {invalid_torrent,
+                <<"Expected string for key: "/utf8, Key/binary>>},
+            case Value of
+                {b_string, Bits} ->
+                    {ok, Bits};
+
+                _ ->
+                    {error, Error}
+            end
         end
     ).
 
--file("src/bencode.gleam", 319).
--spec describe_error(decode_error()) -> binary().
+-file("src/bencode.gleam", 240).
+-spec get_int(gleam@dict:dict(binary(), bencode()), binary()) -> {ok, integer()} |
+    {error, bencode_error()}.
+get_int(Torrent, Key) ->
+    gleam@result:'try'(get_value(Torrent, Key), fun(Value) -> case Value of
+                {b_integer, Integer} ->
+                    {ok, Integer};
+
+                _ ->
+                    {error,
+                        {invalid_torrent,
+                            <<"Expected integer for key: "/utf8, Key/binary>>}}
+            end end).
+
+-file("src/bencode.gleam", 252).
+-spec get_entries(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
+        list({binary(), bencode()})} |
+    {error, bencode_error()}.
+get_entries(Torrent, Key) ->
+    gleam@result:'try'(get_value(Torrent, Key), fun(Value) -> case Value of
+                {b_dict, Entries} ->
+                    {ok, Entries};
+
+                _ ->
+                    {error,
+                        {invalid_torrent,
+                            <<"Expected dictionary for key: "/utf8, Key/binary>>}}
+            end end).
+
+-file("src/bencode.gleam", 264).
+-spec describe_error(bencode_error()) -> binary().
 describe_error(Error) ->
     case Error of
         unexpected_eof ->

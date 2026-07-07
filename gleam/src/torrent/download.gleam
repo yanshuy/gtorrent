@@ -1,72 +1,260 @@
+import file_io
+import gleam/bit_array
+import gleam/bool
 import gleam/dict
 import gleam/erlang/process
+import gleam/int
+import gleam/io
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/result.{try}
+import gleam/string
 import simplifile
-import torrent/file_io
-import torrent/messages.{PeerDisconnected, PieceCompleted, Ready}
-import torrent/peer/peer_session
+import torrent/messages.{LeasePiece, PeerDisconnected, PieceCompleted, Ready}
 import torrent/peer/protocol
+import torrent/peer/session
 import torrent/torrent
 
 pub type DownloadState {
   DownloadState(
     torrent: torrent.TorrentInfo,
-    peers: dict.Dict(protocol.PeerId, process.Subject(messages.WorkerCmd)),
+    pending_pieces: List(torrent.PieceInfo),
+    leased_pieces: List(torrent.PieceInfo),
+    peers: dict.Dict(protocol.PeerId, BitArray),
   )
 }
 
-fn downlaod(
-  state: DownloadState,
+fn new_download(torrent: torrent.TorrentInfo) {
+  let pieces =
+    torrent.new_pieces(torrent.length, torrent.piece_length, torrent.pieces)
+  DownloadState(
+    torrent: torrent,
+    pending_pieces: pieces,
+    leased_pieces: [],
+    peers: dict.new(),
+  )
+}
+
+pub fn download_torrent(
+  download_path: String,
+  endpoints: List(protocol.Endpoint),
+  torrent: torrent.TorrentInfo,
+  peer_id: protocol.PeerId,
+) {
+  let main_subject = process.new_subject()
+  let writer = file_io.new_file_writer(download_path, torrent.length)
+
+  connect_with_peers(main_subject, endpoints, torrent, peer_id)
+
+  handle_downlaod(writer, new_download(torrent), main_subject)
+}
+
+fn handle_downlaod(
   writer: file_io.Writer,
+  state: DownloadState,
   mailbox: process.Subject(messages.PeerEvent),
 ) -> Result(DownloadState, TorrentError) {
-  case process.receive(mailbox, within: 5000) {
+  io.println("[DOWNLOAD LOOP]")
+  echo list.map(state.pending_pieces, fn(p) { p.index })
+  echo list.map(state.leased_pieces, fn(p) { p.index })
+  use <- bool.guard(
+    state.pending_pieces |> list.length == 0
+      && state.leased_pieces |> list.length == 0,
+    return: Ok(state),
+  )
+  echo state.pending_pieces |> list.map(fn(p) { p.index })
+  case process.receive(mailbox, within: 10_000) {
     Ok(event) -> {
       case event {
-        Ready(peer_id, worker, _bitfield) -> {
-          let peers = dict.insert(state.peers, peer_id, worker)
+        Ready(peer_id, bitfield, reply) -> {
+          let peers = dict.insert(state.peers, peer_id, bitfield)
           let state = DownloadState(..state, peers: peers)
-          process.send(worker, messages.AssignPiece(piece))
-          downlaod(state, writer, mailbox)
+          let res = lease_piece(state, bitfield)
+          //can go endgame here
+          case res {
+            Ok(#(piece, new_pending)) -> {
+              echo "1 SEND COMPLETE"
+              process.send(reply, piece)
+              echo "2 SENT COMPLETE"
+              let new_leased = [piece, ..state.leased_pieces]
+              let new_state =
+                DownloadState(
+                  ..state,
+                  leased_pieces: new_leased,
+                  pending_pieces: new_pending,
+                )
+              handle_downlaod(writer, new_state, mailbox)
+            }
+            Error(_) -> handle_downlaod(writer, state, mailbox)
+          }
         }
-        PieceCompleted(peer_id, index, data) -> {
-          let offset = index * torrent.block_size
-          process.spawn(fn() { writer.write(offset, data) })
-          state |> Ok
+        LeasePiece(peer_id, reply) -> {
+          let protocol.PeerId(id) = peer_id
+          echo #(
+            "C REQUEST",
+            id |> bit_array.base16_encode,
+            state.pending_pieces |> list.map(fn(p) { p.index }),
+            state.leased_pieces |> list.map(fn(p) { p.index }),
+          )
+          let assert Ok(bitfield) = dict.get(state.peers, peer_id)
+          let res = lease_piece(state, bitfield)
+          case res {
+            Ok(#(piece, new_pendings)) -> {
+              echo #("D REPLY", piece.index)
+              process.send(reply, piece)
+              let new_leased = [piece, ..state.leased_pieces]
+              let new_state =
+                DownloadState(
+                  ..state,
+                  leased_pieces: new_leased,
+                  pending_pieces: new_pendings,
+                )
+              handle_downlaod(writer, new_state, mailbox)
+            }
+            Error(_) -> handle_downlaod(writer, state, mailbox)
+          }
         }
-        PeerDisconnected(_) -> {
-          todo
+        PieceCompleted(index, data) -> {
+          io.println("[COMPLETE EVENT] index=" <> int.to_string(index))
+          echo list.map(state.leased_pieces, fn(p) { p.index })
+          process.spawn(fn() {
+            let offset = index * state.torrent.piece_length
+            let res = writer.write(writer, offset, data)
+            case res {
+              Ok(_) -> Nil
+              Error(_) -> panic as "write failed"
+            }
+          })
+          let new_leased =
+            state.leased_pieces
+            |> list.filter(fn(piece) { piece.index != index })
+          echo list.map(new_leased, fn(p) { p.index })
+          let new_state = DownloadState(..state, leased_pieces: new_leased)
+          handle_downlaod(writer, new_state, mailbox)
+        }
+        PeerDisconnected(peer_id, reason) -> {
+          let id = {
+            let protocol.PeerId(id) = peer_id
+            id |> bit_array.base16_encode
+          }
+          io.print_error(
+            "Stopping peer session with peer " <> id <> "\nReason: " <> reason,
+          )
+          let peers = dict.delete(state.peers, peer_id)
+          DownloadState(..state, peers: peers) |> Ok
         }
       }
     }
-    Error(_) -> todo
+    Error(_) -> Error(NoPeerResponding)
   }
 }
 
-pub type TorrentError {
-  PeerError(peer_session.PeerError)
-  FileError(simplifile.FileError)
+pub fn connect_with_peers(
+  main_subject: process.Subject(messages.PeerEvent),
+  endpoints: List(protocol.Endpoint),
+  torrent: torrent.TorrentInfo,
+  peer_id: protocol.PeerId,
+) {
+  endpoints
+  |> list.each(fn(endpoint) {
+    process.spawn(fn() {
+      case peer_worker(main_subject, endpoint, torrent.info_hash, peer_id) {
+        Ok(_) -> Nil
+        Error(err) ->
+          io.println(endpoint.ip4 <> "is malicious" <> describe_error(err))
+      }
+    })
+  })
 }
-// fn assign_pieces(
-//   pieces: List(Piece),
-//   sessions: List(PeerSession),
-// ) -> List(PeerSession) {
-//   keep_assigning(pieces, sessions, [])
-// }
 
-// fn keep_assigning(
-//   pieces: List(Piece),
-//   sessions: List(PeerSession),
-//   new_sessions: List(PeerSession),
-// ) -> List(PeerSession) {
-//   case sessions, pieces {
-//     [], _ -> new_sessions
-//     _, [] -> new_sessions
-//     [session, ..sessions], [piece, ..pieces] -> {
-//       let new_sessions = [
-//         PeerSession(..session, piece: Some(new_piece_download(piece))),
-//         ..sessions
-//       ]
-//       keep_assigning(pieces, sessions, new_sessions)
-//     }
+fn peer_worker(
+  parent_subject: process.Subject(messages.PeerEvent),
+  endpoint: protocol.Endpoint,
+  info_hash: BitArray,
+  peer_id: protocol.PeerId,
+) -> Result(Nil, TorrentError) {
+  use #(socket, peer_peer_id) <- try(
+    protocol.handshake(endpoint, info_hash, peer_id)
+    |> result.map_error(ProtocolError),
+  )
+  use _ <- try(
+    session.start_session(parent_subject, socket, peer_peer_id)
+    |> result.map_error(PeerError),
+  )
+  Ok(Nil)
+}
+
+fn lease_piece(
+  state: DownloadState,
+  bitfield: BitArray,
+) -> Result(#(torrent.PieceInfo, List(torrent.PieceInfo)), Nil) {
+  use piece <- try(
+    state.pending_pieces
+    |> list.find(fn(piece) { is_bit_set(bitfield, piece.index) }),
+  )
+  let pendings =
+    state.pending_pieces
+    |> list.filter(fn(pending) { pending.index != piece.index })
+  #(piece, pendings) |> Ok
+}
+
+// fn print_bits(bits: BitArray, log: List(Int)) {
+//   case bits {
+//     <<bit:size(1), rest:bits>> if bit == 1 -> print_bits(rest, [1, ..log])
+//     <<bit:size(1), rest:bits>> if bit == 0 -> print_bits(rest, [0, ..log])
+//     <<>> | _ -> list.reverse(log)
 //   }
 // }
+
+pub fn is_bit_set(bits: BitArray, index: Int) -> Bool {
+  case bits {
+    <<_:size(index), target:size(1), _:bits>> -> target == 1
+    _ -> False
+  }
+}
+
+pub fn download_piece(
+  download_path: String,
+  endpoint: protocol.Endpoint,
+  torrent: torrent.TorrentInfo,
+  peer_id: protocol.PeerId,
+  piece: torrent.PieceInfo,
+) -> Result(Nil, TorrentError) {
+  use #(socket, peer_peer_id) <- try(
+    protocol.handshake(endpoint, torrent.info_hash, peer_id)
+    |> result.map_error(ProtocolError),
+  )
+  use data <- try(
+    session.download_piece(socket, peer_peer_id, piece)
+    |> result.map_error(PeerError),
+  )
+
+  let writer = file_io.new_file_writer(download_path, piece.length)
+
+  writer.write(writer, 0, data)
+  |> result.replace_error(FileError(simplifile.Efault))
+}
+
+pub type TorrentError {
+  NoPeerResponding
+  ProtocolError(protocol.ProtocolError)
+  PeerError(session.PeerError)
+  FileError(simplifile.FileError)
+}
+
+pub fn describe_error(error: TorrentError) -> String {
+  case error {
+    NoPeerResponding ->
+      "Torrent download stalled: No connected peers are currently responding to download requests"
+
+    ProtocolError(err) ->
+      "Torrent protocol error: " <> protocol.describe_error(err)
+
+    PeerError(err) ->
+      // This calls the session error describer function we just completed!
+      session.describe_error(err)
+
+    FileError(file_err) ->
+      "Disk I/O error: " <> simplifile.describe_error(file_err)
+  }
+}

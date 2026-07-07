@@ -1,21 +1,18 @@
-import gleam/bit_array
 import gleam/erlang/process
+import gleam/option.{None, Some}
 import torrent/peer/protocol
 import torrent/torrent
-
-pub type WorkerCmd {
-  AssignPiece(torrent.PieceInfo)
-  Stop
-}
 
 pub type PeerEvent {
   Ready(
     peer: protocol.PeerId,
-    worker: process.Subject(WorkerCmd),
     bitfield: BitArray,
+    reply_subject: process.Subject(torrent.PieceInfo),
   )
-
-  PieceCompleted(peer: protocol.PeerId, index: Int, data: BitArray)
-
-  PeerDisconnected(protocol.PeerId)
+  LeasePiece(
+    peer_id: protocol.PeerId,
+    reply_subject: process.Subject(torrent.PieceInfo),
+  )
+  PieceCompleted(index: Int, data: BitArray)
+  PeerDisconnected(peer: protocol.PeerId, reason: String)
 }

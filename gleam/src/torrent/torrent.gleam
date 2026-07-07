@@ -74,19 +74,6 @@ pub type PieceInfo {
   PieceInfo(index: Int, hash: BitArray, length: Int)
 }
 
-pub type PieceDownload {
-  PieceDownload(
-    info: PieceInfo,
-    blocks: List(BitArray),
-    pending_requests: List(BlockRequest),
-    outstanding_requests: dict.Dict(Int, BlockRequest),
-  )
-}
-
-pub type BlockRequest {
-  BlockRequest(begin: Int, length: Int)
-}
-
 pub type Torrent {
   Torrent(
     info: TorrentInfo,
@@ -111,78 +98,6 @@ fn new_torrent(
   )
 }
 
-// pub fn fetch_torrent(
-//   torrent: TorrentInfo,
-//   download_path: String,
-//   endpoints: List(String),
-//   peer_id: BitArray,
-// ) -> Result(Nil, TorrentError) {
-//   //connect to all endpoints and receive bitfields
-//   let sessions =
-//     endpoints
-//     |> list.take(2)
-//     |> list.filter_map(fn(endpoint) {
-//       use session <- try(handshake(endpoint, torrent.info_hash, peer_id))
-//       receive_bitfield(session)
-//     })
-
-//   let #(peers, _bit_fields) =
-//     list.fold(sessions, #([], []), fn(acc, session) {
-//       let #(peers, bit_fields) = acc
-//       let assert Some(bit_field) = session.bit_field
-//       #([session.peer_id, ..peers], [bit_field, ..bit_fields])
-//     })
-
-//   let torrent = new_torrent(torrent, download_path, peers)
-
-//   download_pieces(torrent, sessions)
-//   //assign piece
-//   todo
-//   // one_piece(session.socket, torrent, session.state, torrent.pieces, 0)
-//   // |> result.replace(Nil)
-// }
-
-// fn download_pieces(
-//   torrent: Torrent,
-//   sessions: List(PeerSession),
-// ) -> Result(Torrent, TorrentError) {
-//   let sessions = assign_pieces(torrent.pending_pieces, sessions)
-//   // there may be a situation where sessions are more than pending pieces: endgame?
-//   let writer =
-//     file_io.new_file_writer(torrent.download_path, torrent.info.length)
-
-//   list.try_each(sessions, fn(session) { handle_peer_event(torrent, sessions) })
-// }
-
-// fn handle_peer_event(
-//   torrent: Torrent,
-//   session: PeerSession,
-// ) -> Result(Torrent, TorrentError) {
-//   use event <- try(peer_exchange(session) |> map_error(ProtocolError))
-//   case event {
-//     SessionUpdate(session) -> handle_peer_event(torrent, session)
-//     PieceDownloaded(index, data, session) -> {
-//       let offset = index * torrent.info.piece_length
-//       case download_piece(torrent.download_path, data, offset) {
-//         Ok(Nil) -> {
-//           let set = set.insert(torrent.downloaded_pieces, index)
-//           let new_torrent = Torrent(..torrent, downloaded_pieces: set)
-//           handle_peer_event(new_torrent, session)
-//         }
-//         Error(err) -> Error(FileError(err))
-//       }
-//     }
-//   }
-// }
-
-fn download_piece(
-  download_path,
-  data,
-  offset,
-) -> Result(Nil, simplifile.FileError) {
-  todo
-}
-
 pub const block_size = 16_384
 
 pub fn new_pieces(
@@ -190,18 +105,18 @@ pub fn new_pieces(
   piece_length: Int,
   piece_hashes: List(BitArray),
 ) -> List(PieceInfo) {
-  new_pieces_loop(piece_hashes, 0, file_length, piece_length, [])
+  new_pieces_loop(piece_hashes, file_length, piece_length, 0, [])
 }
 
 fn new_pieces_loop(
   hashes: List(BitArray),
-  index: Int,
   file_length: Int,
   piece_length: Int,
+  index: Int,
   acc: List(PieceInfo),
 ) -> List(PieceInfo) {
   case hashes {
-    [] -> list.reverse(acc)
+    [] -> acc
 
     [last_hash] -> {
       let length = case file_length % piece_length {
@@ -212,34 +127,10 @@ fn new_pieces_loop(
       list.reverse([piece, ..acc])
     }
 
-    [head_hash, ..tail_hashes] -> {
-      let piece = PieceInfo(index: index, hash: head_hash, length: piece_length)
-      new_pieces_loop(tail_hashes, index + 1, file_length, piece_length, [
-        piece,
-        ..acc
-      ])
+    [hash, ..rest] -> {
+      let piece = PieceInfo(index: index, hash: hash, length: piece_length)
+      new_pieces_loop(rest, file_length, piece_length, index + 1, [piece, ..acc])
     }
-  }
-}
-
-pub fn piece_block_requests(piece_length: Int) -> List(BlockRequest) {
-  let block_count = { piece_length + block_size - 1 } / block_size
-  piece_block_requests_loop(piece_length, block_count - 1, [])
-}
-
-fn piece_block_requests_loop(
-  length: Int,
-  block: Int,
-  requests: List(BlockRequest),
-) -> List(BlockRequest) {
-  case block < 0 {
-    False -> {
-      let begin = block * block_size
-      let block_length = int.min(block_size, length - begin)
-      let request = BlockRequest(begin: begin, length: block_length)
-      piece_block_requests_loop(length, block - 1, [request, ..requests])
-    }
-    True -> requests
   }
 }
 
@@ -253,13 +144,4 @@ pub fn piece_size(index: Int, file_length: Int, piece_length: Int) -> Int {
       }
     False -> piece_length
   }
-}
-
-pub fn new_piece_download(piece: PieceInfo) {
-  PieceDownload(
-    info: piece,
-    blocks: [],
-    pending_requests: piece_block_requests(piece.length),
-    outstanding_requests: dict.new(),
-  )
 }

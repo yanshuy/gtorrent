@@ -39,7 +39,14 @@ pub fn connect(endpoint: Endpoint) -> Result(mug.Socket, ProtocolError) {
   })
 }
 
-pub fn handshake(
+pub fn handshake(endpoint: Endpoint, info_hash: BitArray, peer_id: PeerId) {
+  use socket <- try(connect(endpoint))
+  let PeerId(id) = peer_id
+  use peer_peer_id <- try(peer_handshake(socket, info_hash, id))
+  #(socket, peer_peer_id) |> Ok
+}
+
+fn peer_handshake(
   socket: mug.Socket,
   info_hash: BitArray,
   peer_id: BitArray,

@@ -6,6 +6,7 @@
                     gleam_http,
                     gleam_httpc,
                     gleam_json,
+                    gleam_otp,
                     gleam_stdlib,
                     gleeunit,
                     inets,
@@ -13,6 +14,7 @@
                     simplifile]},
     {description, ""},
     {modules, [bittorrent,
-               peer_protocol]},
+               torrent@download,
+               torrent@peer@session]},
     {registered, []}
 ]}.

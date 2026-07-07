@@ -10,7 +10,9 @@ import gleam/result.{map_error, replace_error, try}
 import gleam/string
 import gleam/uri
 import simplifile
-import torrent/protocol
+import torrent/download
+import torrent/peer/protocol
+import torrent/peer/session
 import torrent/torrent
 import tracker
 
@@ -86,6 +88,8 @@ pub type CmdError {
   DecodeError(bencode.BencodeError)
   TrackerError(tracker.TrackerError)
   ProtocolError(protocol.ProtocolError)
+  PeerError(session.PeerError)
+  TorrentError(download.TorrentError)
 }
 
 fn cmd_decode(encode_str: String) -> Result(Nil, CmdError) {
@@ -155,9 +159,8 @@ fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
   use torrent <- try(info(filename))
 
   use endpoint <- try(new_endpoint(endpoint) |> replace_error(InvalidEndpoint))
-  use socket <- try(protocol.connect(endpoint) |> map_error(ProtocolError))
-  use peer_peer_id <- try(
-    protocol.handshake(socket, torrent.info_hash, peer_id)
+  use #(_socket, peer_peer_id) <- try(
+    protocol.handshake(endpoint, torrent.info_hash, peer_id)
     |> map_error(ProtocolError),
   )
   let protocol.PeerId(id) = peer_peer_id
@@ -182,24 +185,29 @@ fn cmd_download_piece(
   use torrent <- try(info(torrent_file))
 
   use peers <- try(
-    tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
+    tracker.get_peers(torrent, peer_id)
+    |> map_error(TrackerError),
   )
 
-  use piece_hash <- try(
-    torrent.pieces
+  use endpoint <- try(
+    peers
+    |> list.first
+    |> replace_error(InvalidArguments),
+  )
+
+  use endpoint <- try(
+    new_endpoint(endpoint)
+    |> replace_error(InvalidEndpoint),
+  )
+
+  use piece <- try(
+    torrent.new_pieces(torrent.length, torrent.piece_length, torrent.pieces)
     |> list.drop(piece_index)
     |> list.first
     |> replace_error(InvalidPieceIndex(piece_index)),
   )
-  let assert [endpoint, ..] = peers
-
-  let state = protocol.new_peer(endpoint, download_path)
-  use #(socket, _) <- try(
-    protocol.handshake(endpoint, torrent, peer_id)
-    |> map_error(PeerError),
-  )
-  protocol.one_piece(socket, torrent, state, [piece_hash], piece_index)
-  |> map_error(PeerError)
+  download.download_piece(download_path, endpoint, torrent, peer_id, piece)
+  |> map_error(TorrentError)
 }
 
 fn cmd_download(
@@ -209,23 +217,30 @@ fn cmd_download(
   use peer_id <- try(load_peer_id() |> map_error(FileError))
   use torrent <- try(info(torrent_file))
 
-  use peers <- try(
+  use peer_endpoints <- try(
     tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
   )
-  let assert [endpoint, ..] = peers
-  let state = peer_protocol.new_peer(endpoint, download_path)
-  peer_protocol.fetch_pieces(torrent, state, peer_id)
-  |> map_error(PeerError)
+  use endpoints <- try(
+    peer_endpoints
+    |> list.try_map(fn(endpoint) {
+      new_endpoint(endpoint) |> replace_error(InvalidEndpoint)
+    }),
+  )
+  let state =
+    download.download_torrent(download_path, endpoints, torrent, peer_id)
+    |> map_error(TorrentError)
+  echo state
+  io.println("download complete") |> Ok
 }
 
-fn load_peer_id() -> Result(BitArray, simplifile.FileError) {
+fn load_peer_id() -> Result(protocol.PeerId, simplifile.FileError) {
   case simplifile.read_bits(".peer_id") {
-    Ok(peer_id) -> Ok(peer_id)
+    Ok(peer_id) -> Ok(protocol.PeerId(peer_id))
 
     _ -> {
       let peer_id = crypto.strong_random_bytes(20)
       use _ <- try(simplifile.write_bits(".peer_id", peer_id))
-      Ok(peer_id)
+      Ok(protocol.PeerId(peer_id))
     }
   }
 }
@@ -241,7 +256,9 @@ fn describe_cmd_error(error: CmdError) {
     FileError(err) -> simplifile.describe_error(err)
     DecodeError(err) -> bencode.describe_error(err)
     TrackerError(err) -> tracker.describe_error(err)
-    PeerError(err) -> protocol.describe_error(err)
+    PeerError(err) -> session.describe_error(err)
+    ProtocolError(err) -> protocol.describe_error(err)
+    TorrentError(err) -> download.describe_error(err)
   }
 }
 
