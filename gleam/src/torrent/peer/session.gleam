@@ -8,6 +8,7 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result.{map_error, replace_error, try}
+import gleam/string
 import mug
 import torrent/messages
 import torrent/peer/protocol.{BitField, Choke, Have, Interested, Piece, Unchoke}
@@ -73,21 +74,19 @@ pub fn start_session(
       )
     })
   let piece_dwnld = new_piece_download(piece)
-  handle_piece_download(parent_subject, session, piece_dwnld)
+  let new_session = PeerSession(..session, piece: Some(piece_dwnld))
+  handle_piece_download(parent_subject, new_session)
   Ok(Nil)
 }
 
 fn handle_piece_download(
   parent_subject: Subject(messages.PeerEvent),
   session: PeerSession,
-  piece: PieceDownload,
 ) {
-  let session_with_piece = PeerSession(..session, piece: Some(piece))
-  let data = handle_piece(session_with_piece)
-  let protocol.PeerId(id) = session.peer_id
-  echo #("A COMPLETE", id |> bit_array.base16_encode, piece.info.index)
-  case data {
-    Ok(data) -> {
+  let assert Some(piece) = session.piece
+  let result = handle_piece(session)
+  case result {
+    Ok(PieceResult(session: session, piece: data)) -> {
       process.send(
         parent_subject,
         messages.PieceCompleted(index: piece.info.index, data: data),
@@ -96,9 +95,12 @@ fn handle_piece_download(
         process.call_forever(parent_subject, fn(subject) {
           messages.LeasePiece(session.peer_id, subject)
         })
-      echo "3 GOT NEXT PIECE"
+      echo string.inspect(session.peer_id)
+        <> "GOT NEXT PIECE"
+        <> string.inspect(next_piece)
       let piece_dwnld = new_piece_download(next_piece)
-      handle_piece_download(parent_subject, session, piece_dwnld)
+      let new_session = PeerSession(..session, piece: Some(piece_dwnld))
+      handle_piece_download(parent_subject, new_session)
     }
     Error(err) -> {
       process.send(
@@ -117,7 +119,6 @@ fn receive_bitfield(session: PeerSession) -> Result(PeerSession, PeerError) {
   case message {
     BitField(bits) ->
       handle_bitfield(PeerSession(..session, bitfield: bits), bits)
-
     // for now if no bitfield sent just disconnect
     _ -> Error(PeerError("no bitfield"))
   }
@@ -127,7 +128,11 @@ pub type BlockRequest {
   BlockRequest(begin: Int, length: Int)
 }
 
-fn handle_piece(session: PeerSession) -> Result(BitArray, PeerError) {
+pub type PieceResult {
+  PieceResult(session: PeerSession, piece: BitArray)
+}
+
+fn handle_piece(session: PeerSession) -> Result(PieceResult, PeerError) {
   case session {
     PeerSession(piece: None, ..) -> panic as "piece not set before start"
     PeerSession(choked: False, interested: True, ..) -> {
@@ -139,7 +144,7 @@ fn handle_piece(session: PeerSession) -> Result(BitArray, PeerError) {
   }
 }
 
-fn peer_listen(session: PeerSession) -> Result(BitArray, PeerError) {
+fn peer_listen(session: PeerSession) -> Result(PieceResult, PeerError) {
   io.println("[WAIT]")
   use message <- try(
     protocol.receive_message(session.socket) |> map_error(ProtocolError),
@@ -157,11 +162,11 @@ fn peer_listen(session: PeerSession) -> Result(BitArray, PeerError) {
         list.is_empty(piece.pending_requests)
         && dict.is_empty(piece.outstanding_requests)
       {
-        True -> handle_piece_complete(piece)
-        False -> {
-          let session = PeerSession(..session, piece: Some(piece))
-          handle_piece(session)
+        True -> {
+          use piece <- try(handle_piece_complete(piece))
+          PieceResult(session: session, piece: piece) |> Ok
         }
+        False -> handle_piece(PeerSession(..session, piece: Some(piece)))
       }
     }
     message -> Error(UnexpectedMessage(protocol.message_id(message)))
@@ -208,24 +213,10 @@ fn request_piece_blocks(
   echo dict.size(piece.outstanding_requests)
   let take = int.min(4, 4 - dict.size(piece.outstanding_requests))
   let remaining = list.drop(piece.pending_requests, take)
-  io.println(
-    "[REQUEST] piece="
-    <> int.to_string(piece.info.index)
-    <> " pending="
-    <> int.to_string(list.length(piece.pending_requests))
-    <> " outstanding="
-    <> int.to_string(dict.size(piece.outstanding_requests)),
-  )
 
   let reqs = piece.pending_requests |> list.take(take)
   use _ <- try(
     list.try_each(reqs, fn(req) {
-      io.println(
-        "[SEND] piece="
-        <> int.to_string(piece.info.index)
-        <> " begin="
-        <> int.to_string(req.begin),
-      )
       let id = 6
       let request_message = <<
         13:big-size(4)-unit(8),
@@ -259,12 +250,6 @@ fn handle_piece_block(
 ) -> Result(PieceDownload, PeerError) {
   let assert Some(piece) = session.piece
   let assert Piece(peer_piece_index, begin, block) = message
-  io.println(
-    "[RECV] piece="
-    <> int.to_string(peer_piece_index)
-    <> " begin="
-    <> int.to_string(begin),
-  )
   use <- bool.guard(
     peer_piece_index != piece.info.index,
     return: Error(PeerError("piece index mismatch")),
@@ -289,12 +274,6 @@ fn handle_piece_block(
       )
 
       let outstanding = dict.delete(piece.outstanding_requests, begin)
-      io.println(
-        "[STATE] outstanding="
-        <> int.to_string(dict.size(outstanding))
-        <> " pending="
-        <> int.to_string(list.length(piece.pending_requests)),
-      )
       let new_blocks = dict.insert(piece.blocks, begin, block)
 
       PieceDownload(
@@ -354,7 +333,8 @@ pub fn download_piece(
   use session <- try(receive_bitfield(session))
   let piece = new_piece_download(piece)
   let session = PeerSession(..session, piece: Some(piece))
-  handle_piece(session)
+  use result <- try(handle_piece(session))
+  result.piece |> Ok
 }
 
 pub type PeerError {
