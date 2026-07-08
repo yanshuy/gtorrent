@@ -14,7 +14,6 @@
                     simplifile]},
     {description, ""},
     {modules, [bittorrent,
-               torrent@download,
-               torrent@peer@session]},
+               torrent@download]},
     {registered, []}
 ]}.

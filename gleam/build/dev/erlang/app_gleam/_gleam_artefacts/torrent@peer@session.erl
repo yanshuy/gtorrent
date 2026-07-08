@@ -29,7 +29,7 @@
     invalid_block |
     duplicate_bitfield.
 
--file("src/torrent/peer/session.gleam", 311).
+-file("src/torrent/peer/session.gleam", 308).
 -spec piece_block_requests_loop(integer(), integer(), list(block_request())) -> list(block_request()).
 piece_block_requests_loop(Length, Block, Requests) ->
     case Block < 0 of
@@ -43,7 +43,7 @@ piece_block_requests_loop(Length, Block, Requests) ->
             Requests
     end.
 
--file("src/torrent/peer/session.gleam", 305).
+-file("src/torrent/peer/session.gleam", 302).
 -spec piece_block_requests(integer()) -> list(block_request()).
 piece_block_requests(Piece_length) ->
     Block_count = case 16384 of
@@ -66,7 +66,7 @@ new_piece_download(Piece) ->
 new_session(Socket, Peer_id) ->
     {peer_session, Socket, Peer_id, <<>>, none, true, false}.
 
--file("src/torrent/peer/session.gleam", 349).
+-file("src/torrent/peer/session.gleam", 346).
 -spec describe_error(peer_error()) -> binary().
 describe_error(Error) ->
     case Error of
@@ -91,7 +91,7 @@ describe_error(Error) ->
             <<"Protocol violation: peer attempted to send a duplicate bitfield message after connection setup"/utf8>>
     end.
 
--file("src/torrent/peer/session.gleam", 290).
+-file("src/torrent/peer/session.gleam", 287).
 -spec verify_piece(bitstring(), bitstring()) -> {ok, nil} |
     {error, peer_error()}.
 verify_piece(Binary, Hash) ->
@@ -104,7 +104,7 @@ verify_piece(Binary, Hash) ->
             {error, piece_hash_mismatch}
     end.
 
--file("src/torrent/peer/session.gleam", 176).
+-file("src/torrent/peer/session.gleam", 175).
 -spec handle_piece_complete(piece_download()) -> {ok, bitstring()} |
     {error, peer_error()}.
 handle_piece_complete(Piece) ->
@@ -133,7 +133,7 @@ handle_piece_complete(Piece) ->
         end
     ).
 
--file("src/torrent/peer/session.gleam", 247).
+-file("src/torrent/peer/session.gleam", 244).
 -spec handle_piece_block(peer_session(), torrent@peer@protocol:peer_message()) -> {ok,
         piece_download()} |
     {error, peer_error()}.
@@ -146,12 +146,12 @@ handle_piece_block(Session, Message) ->
                         file => <<?FILEPATH/utf8>>,
                         module => <<"torrent/peer/session"/utf8>>,
                         function => <<"handle_piece_block"/utf8>>,
-                        line => 251,
+                        line => 248,
                         value => _assert_fail,
-                        start => 6945,
-                        'end' => 6983,
-                        pattern_start => 6956,
-                        pattern_end => 6967})
+                        start => 6834,
+                        'end' => 6872,
+                        pattern_start => 6845,
+                        pattern_end => 6856})
     end,
     {Peer_piece_index@1, Begin@1, Block@1} = case Message of
         {piece, Peer_piece_index, Begin, Block} -> {
@@ -164,12 +164,12 @@ handle_piece_block(Session, Message) ->
                         file => <<?FILEPATH/utf8>>,
                         module => <<"torrent/peer/session"/utf8>>,
                         function => <<"handle_piece_block"/utf8>>,
-                        line => 252,
+                        line => 249,
                         value => _assert_fail@1,
-                        start => 6986,
-                        'end' => 7044,
-                        pattern_start => 6997,
-                        pattern_end => 7034})
+                        start => 6875,
+                        'end' => 6933,
+                        pattern_start => 6886,
+                        pattern_end => 6923})
     end,
     gleam@bool:guard(
         Peer_piece_index@1 /= erlang:element(2, erlang:element(2, Piece@1)),
@@ -227,7 +227,7 @@ handle_piece_block(Session, Message) ->
         end
     ).
 
--file("src/torrent/peer/session.gleam", 208).
+-file("src/torrent/peer/session.gleam", 207).
 -spec request_piece_blocks(peer_session()) -> {ok, peer_session()} |
     {error, peer_error()}.
 request_piece_blocks(Session) ->
@@ -239,15 +239,13 @@ request_piece_blocks(Session) ->
                         file => <<?FILEPATH/utf8>>,
                         module => <<"torrent/peer/session"/utf8>>,
                         function => <<"request_piece_blocks"/utf8>>,
-                        line => 211,
+                        line => 210,
                         value => _assert_fail,
-                        start => 5791,
-                        'end' => 5829,
-                        pattern_start => 5802,
-                        pattern_end => 5813})
+                        start => 5768,
+                        'end' => 5806,
+                        pattern_start => 5779,
+                        pattern_end => 5790})
     end,
-    echo(erlang:length(erlang:element(4, Piece@1)), nil, 212),
-    echo(maps:size(erlang:element(5, Piece@1)), nil, 213),
     Take = gleam@int:min(4, 4 - maps:size(erlang:element(5, Piece@1))),
     Remaining = gleam@list:drop(erlang:element(4, Piece@1), Take),
     Reqs = begin
@@ -306,7 +304,6 @@ request_piece_blocks(Session) ->
 -spec peer_listen(peer_session()) -> {ok, piece_result()} |
     {error, peer_error()}.
 peer_listen(Session) ->
-    gleam_stdlib:println(<<"[WAIT]"/utf8>>),
     gleam@result:'try'(
         begin
             _pipe = torrent@peer@protocol:receive_message(
@@ -475,7 +472,7 @@ handle_piece_download(Parent_subject, Session) ->
             gleam@erlang@process:kill(erlang:self())
     end.
 
--file("src/torrent/peer/session.gleam", 298).
+-file("src/torrent/peer/session.gleam", 295).
 -spec is_any_bit_set(bitstring()) -> boolean().
 is_any_bit_set(Bitfield) ->
     case Bitfield of
@@ -489,7 +486,7 @@ is_any_bit_set(Bitfield) ->
             false
     end.
 
--file("src/torrent/peer/session.gleam", 190).
+-file("src/torrent/peer/session.gleam", 189).
 -spec handle_bitfield(peer_session(), bitstring()) -> {ok, peer_session()} |
     {error, peer_error()}.
 handle_bitfield(Session, Bitfield) ->
@@ -590,7 +587,7 @@ start_session(Parent_subject, Socket, Peer_id) ->
         end
     ).
 
--file("src/torrent/peer/session.gleam", 327).
+-file("src/torrent/peer/session.gleam", 324).
 -spec download_piece(
     mug:socket(),
     torrent@peer@protocol:peer_id(),

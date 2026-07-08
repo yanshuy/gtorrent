@@ -53,16 +53,12 @@ fn handle_downlaod(
   writer: file_io.Writer,
   state: DownloadState,
   mailbox: process.Subject(messages.PeerEvent),
-) -> Result(DownloadState, TorrentError) {
-  io.println("[DOWNLOAD LOOP]")
-  echo list.map(state.pending_pieces, fn(p) { p.index })
-  echo list.map(state.leased_pieces, fn(p) { p.index })
+) -> Result(Nil, TorrentError) {
   use <- bool.guard(
     state.pending_pieces |> list.length == 0
       && state.leased_pieces |> list.length == 0,
-    return: Ok(state),
+    return: Ok(Nil),
   )
-  echo state.pending_pieces |> list.map(fn(p) { p.index })
   case process.receive(mailbox, within: 10_000) {
     Ok(event) -> {
       case event {
@@ -73,14 +69,11 @@ fn handle_downlaod(
           //can go endgame here
           case res {
             Ok(#(piece, new_pending)) -> {
-              echo "1 SEND COMPLETE"
               process.send(reply, piece)
-              echo "2 SENT COMPLETE"
-              let new_leased = [piece, ..state.leased_pieces]
               let new_state =
                 DownloadState(
                   ..state,
-                  leased_pieces: new_leased,
+                  leased_pieces: [piece, ..state.leased_pieces],
                   pending_pieces: new_pending,
                 )
               handle_downlaod(writer, new_state, mailbox)
@@ -89,24 +82,15 @@ fn handle_downlaod(
           }
         }
         LeasePiece(peer_id, reply) -> {
-          let protocol.PeerId(id) = peer_id
-          echo #(
-            "C REQUEST",
-            id |> bit_array.base16_encode,
-            state.pending_pieces |> list.map(fn(p) { p.index }),
-            state.leased_pieces |> list.map(fn(p) { p.index }),
-          )
           let assert Ok(bitfield) = dict.get(state.peers, peer_id)
           let res = lease_piece(state, bitfield)
           case res {
             Ok(#(piece, new_pendings)) -> {
-              echo #("D REPLY", piece.index)
               process.send(reply, piece)
-              let new_leased = [piece, ..state.leased_pieces]
               let new_state =
                 DownloadState(
                   ..state,
-                  leased_pieces: new_leased,
+                  leased_pieces: [piece, ..state.leased_pieces],
                   pending_pieces: new_pendings,
                 )
               handle_downlaod(writer, new_state, mailbox)
@@ -141,7 +125,8 @@ fn handle_downlaod(
             "Stopping peer session with peer " <> id <> "\nReason: " <> reason,
           )
           let peers = dict.delete(state.peers, peer_id)
-          DownloadState(..state, peers: peers) |> Ok
+          let new_state = DownloadState(..state, peers: peers)
+          handle_downlaod(writer, new_state, mailbox)
         }
       }
     }
@@ -155,7 +140,9 @@ pub fn connect_with_peers(
   torrent: torrent.TorrentInfo,
   peer_id: protocol.PeerId,
 ) {
+  echo endpoints |> list.length
   endpoints
+  |> list.take(6)
   |> list.each(fn(endpoint) {
     process.spawn(fn() {
       case peer_worker(main_subject, endpoint, torrent.info_hash, peer_id) {

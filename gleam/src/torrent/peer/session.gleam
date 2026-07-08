@@ -95,9 +95,6 @@ fn handle_piece_download(
         process.call_forever(parent_subject, fn(subject) {
           messages.LeasePiece(session.peer_id, subject)
         })
-      echo string.inspect(session.peer_id)
-        <> "GOT NEXT PIECE"
-        <> string.inspect(next_piece)
       let piece_dwnld = new_piece_download(next_piece)
       let new_session = PeerSession(..session, piece: Some(piece_dwnld))
       handle_piece_download(parent_subject, new_session)
@@ -145,7 +142,6 @@ fn handle_piece(session: PeerSession) -> Result(PieceResult, PeerError) {
 }
 
 fn peer_listen(session: PeerSession) -> Result(PieceResult, PeerError) {
-  io.println("[WAIT]")
   use message <- try(
     protocol.receive_message(session.socket) |> map_error(ProtocolError),
   )
@@ -209,8 +205,6 @@ fn request_piece_blocks(
   session: PeerSession,
 ) -> Result(PeerSession, PeerError) {
   let assert Some(piece) = session.piece
-  echo list.length(piece.pending_requests)
-  echo dict.size(piece.outstanding_requests)
   let take = int.min(4, 4 - dict.size(piece.outstanding_requests))
   let remaining = list.drop(piece.pending_requests, take)
 

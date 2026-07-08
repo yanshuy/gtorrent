@@ -8,7 +8,6 @@ import gleam/json
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
-import gleam/uri
 import simplifile
 import torrent/download
 import torrent/peer/protocol
@@ -226,10 +225,9 @@ fn cmd_download(
       new_endpoint(endpoint) |> replace_error(InvalidEndpoint)
     }),
   )
-  let state =
-    download.download_torrent(download_path, endpoints, torrent, peer_id)
-    |> map_error(TorrentError)
-  echo state
+
+  download.download_torrent(download_path, endpoints, torrent, peer_id)
+  |> map_error(TorrentError)
   io.println("download complete") |> Ok
 }
 
