@@ -1,5 +1,4 @@
 import gleam/erlang/process
-import gleam/option.{None, Some}
 import torrent/peer/protocol
 import torrent/torrent
 

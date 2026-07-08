@@ -1,6 +1,5 @@
 import gleam/int
-import gleam/option.{None, Some}
-import gleam/result.{map_error, replace_error, try}
+import gleam/result.{map_error, try}
 import mug.{ConnectionOptions}
 
 pub type PeerMessage {

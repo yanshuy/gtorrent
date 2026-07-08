@@ -1,6 +1,7 @@
 *.ez
 erl_crash.dump
 
+# build/
 build/packages/
 build/lsp/
 build/*.lock

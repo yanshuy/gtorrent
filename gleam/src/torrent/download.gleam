@@ -6,9 +6,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
-import gleam/string
 import simplifile
 import torrent/messages.{LeasePiece, PeerDisconnected, PieceCompleted, Ready}
 import torrent/peer/protocol

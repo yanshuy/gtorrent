@@ -4,11 +4,9 @@ import gleam/crypto
 import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/result.{map_error, replace_error, try}
-import gleam/string
+import gleam/result.{map_error, try}
 import mug
 import torrent/messages
 import torrent/peer/protocol.{BitField, Choke, Have, Interested, Piece, Unchoke}

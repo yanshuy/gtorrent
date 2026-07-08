@@ -1,11 +1,9 @@
 import bencode
 import gleam/crypto
 import gleam/dict
-import gleam/int
 import gleam/list
 import gleam/result.{try}
 import gleam/set
-import simplifile
 import torrent/peer/protocol
 
 pub type TorrentInfo {
@@ -80,21 +78,6 @@ pub type Torrent {
     download_path: String,
     peers: set.Set(protocol.PeerId),
     pending_pieces: List(PieceInfo),
-  )
-}
-
-fn new_torrent(
-  torrent: TorrentInfo,
-  download_path: String,
-  peers: List(protocol.PeerId),
-) {
-  let peers = set.from_list(peers)
-  let pieces = new_pieces(torrent.length, torrent.piece_length, torrent.pieces)
-  Torrent(
-    info: torrent,
-    download_path: download_path,
-    peers: peers,
-    pending_pieces: pieces,
   )
 }
 
