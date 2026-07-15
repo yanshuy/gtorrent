@@ -13,7 +13,6 @@
                     mug,
                     simplifile]},
     {description, ""},
-    {modules, [bittorrent,
-               torrent@download]},
+    {modules, []},
     {registered, []}
 ]}.

@@ -9,3 +9,4 @@ debug: true
 #
 # Available versions: elixir-1.19
 buildpack: elixir-1.19
+executable: ./your_program.sh

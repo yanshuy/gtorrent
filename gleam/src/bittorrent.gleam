@@ -2,6 +2,7 @@ import argv
 import bencode
 import gleam/bit_array
 import gleam/crypto
+import gleam/dict
 import gleam/int
 import gleam/io
 import gleam/json
@@ -72,23 +73,14 @@ pub fn execute_cmd(args: List(String)) -> Result(Nil, CmdError) {
         _ -> Error(InsufficientArguments("download_piece"))
       }
 
+    ["magnet_parse", ..rest] ->
+      case rest {
+        [magnet_link] -> cmd_parse_magnet(magnet_link)
+        _ -> Error(InsufficientArguments("magnet_parse"))
+      }
+
     [command, ..] -> Error(UnknownCommand(command))
   }
-}
-
-pub type CmdError {
-  UnknownCommand(String)
-  InvalidArguments
-  InsufficientArguments(String)
-  InvalidPieceIndex(Int)
-  InvalidEndpoint
-
-  FileError(simplifile.FileError)
-  DecodeError(bencode.BencodeError)
-  TrackerError(tracker.TrackerError)
-  ProtocolError(protocol.ProtocolError)
-  PeerError(session.PeerError)
-  TorrentError(download.TorrentError)
 }
 
 fn cmd_decode(encode_str: String) -> Result(Nil, CmdError) {
@@ -228,7 +220,33 @@ fn cmd_download(
 
   download.download_torrent(download_path, endpoints, torrent, peer_id)
   |> map_error(TorrentError)
-  io.println("download complete") |> Ok
+  io.println("download complete")
+  Ok(Nil)
+}
+
+fn cmd_parse_magnet(magnet_link: String) -> Result(Nil, CmdError) {
+  echo "hloeafafaade"
+  use magnet_info_dict <- try(
+    parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
+  )
+  let tr = dict.get(magnet_info_dict, "tr")
+  case tr {
+    Ok(url) -> io.println("Tracker URL: " <> url)
+    Error(_) -> io.print_error("Error: 'tr' (Tracker URL) is missing.")
+  }
+
+  let xt = dict.get(magnet_info_dict, "xt")
+  case xt {
+    Ok(urn) -> {
+      let hash = case string.split_once(urn, "urn:btih:") {
+        Ok(hash) -> hash.1
+        Error(_) -> urn
+      }
+      io.println("Info Hash: " <> hash)
+    }
+    Error(_) -> io.print_error("Error: 'xt' (Info Hash) is missing.")
+  }
+  Ok(Nil)
 }
 
 fn load_peer_id() -> Result(protocol.PeerId, simplifile.FileError) {
@@ -243,6 +261,33 @@ fn load_peer_id() -> Result(protocol.PeerId, simplifile.FileError) {
   }
 }
 
+pub fn parse_magnet(
+  magnet_link: String,
+) -> Result(dict.Dict(String, String), Nil) {
+  use #(_, query_param) <- try(string.split_once(magnet_link, "?"))
+
+  query_param
+  |> string.split("&")
+  |> list.try_map(string.split_once(_, "="))
+  |> result.map(dict.from_list)
+}
+
+pub type CmdError {
+  UnknownCommand(String)
+  InvalidArguments
+  InsufficientArguments(String)
+  InvalidPieceIndex(Int)
+  InvalidEndpoint
+  InvalidMagnetLink
+
+  FileError(simplifile.FileError)
+  DecodeError(bencode.BencodeError)
+  TrackerError(tracker.TrackerError)
+  ProtocolError(protocol.ProtocolError)
+  PeerError(session.PeerError)
+  TorrentError(download.TorrentError)
+}
+
 fn describe_cmd_error(error: CmdError) {
   case error {
     UnknownCommand(command) -> "Unknown command: " <> command
@@ -250,6 +295,7 @@ fn describe_cmd_error(error: CmdError) {
     InsufficientArguments(command) ->
       "Insufficient arguments for `" <> command <> "`"
     InvalidEndpoint -> "Invalid endpoint. Expected <ip>:<port>."
+    InvalidMagnetLink -> ""
     InvalidPieceIndex(index) -> "Invalid piece index: " <> int.to_string(index)
     FileError(err) -> simplifile.describe_error(err)
     DecodeError(err) -> bencode.describe_error(err)

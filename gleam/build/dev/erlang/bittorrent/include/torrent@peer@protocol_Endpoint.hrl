@@ -1,0 +1,1 @@
+-record(endpoint, {ip4 :: binary(), port :: integer()}).
