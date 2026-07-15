@@ -1,0 +1,1 @@
+-record(connect_failed_both, {ipv4 :: mug:error(), ipv6 :: mug:error()}).
