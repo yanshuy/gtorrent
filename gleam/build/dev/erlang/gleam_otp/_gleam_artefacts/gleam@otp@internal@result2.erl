@@ -13,6 +13,6 @@
 
 ?MODULEDOC(false).
 
--type result2(ASC, ASD, ASE) :: {ok, ASC, ASD} | {error, ASE}.
+-type result2(GDZ, GEA, GEB) :: {ok, GDZ, GEA} | {error, GEB}.
 
 

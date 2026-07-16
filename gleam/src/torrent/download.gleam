@@ -132,7 +132,7 @@ fn handle_download(
             id |> bit_array.base16_encode
           }
           io.print_error(
-            "Stopping peer session with peer " <> id <> "\nReason: " <> reason,
+            "Stopping peer session with: " <> id <> "\nReason: " <> reason,
           )
           let peers = dict.delete(state.peers, peer_id)
           let new_state = TorrentState(..state, peers: peers)

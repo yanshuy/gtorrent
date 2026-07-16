@@ -1,1 +1,1 @@
--record(piece_completed, {index :: integer(), data :: bitstring()}).
+-record(piece_completed, {index :: integer(), piece :: bitstring()}).

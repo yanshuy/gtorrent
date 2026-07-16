@@ -3,6 +3,7 @@
     {applications, [gleam_erlang,
                     gleam_stdlib]},
     {description, "A TCP client for Gleam!"},
-    {modules, []},
+    {modules, [mug,
+               mug_ffi]},
     {registered, []}
 ]}.

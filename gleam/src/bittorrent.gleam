@@ -279,11 +279,14 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
 
   use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
 
-  use #(_socket, peer_peer_id, _) <- try(
+  use #(socket, peer_peer_id, _) <- try(
     protocol.handshake(endpoint, magnet_info.info_hash, peer_id)
     |> map_error(ProtocolError),
   )
-
+  use _ <- try(
+    protocol.extension_handshake(socket)
+    |> map_error(ProtocolError),
+  )
   let protocol.PeerId(id) = peer_peer_id
   io.println(
     "Peer ID: "

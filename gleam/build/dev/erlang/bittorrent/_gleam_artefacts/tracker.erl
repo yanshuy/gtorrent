@@ -95,7 +95,7 @@ split_peers(Peers, Acc) ->
             {error, nil}
     end.
 
--file("src/tracker.gleam", 41).
+-file("src/tracker.gleam", 65).
 -spec decode_peers(bencode:bencode()) -> {ok, list(binary())} |
     {error, tracker_error()}.
 decode_peers(Peers_value) ->
@@ -120,7 +120,7 @@ decode_peers(Peers_value) ->
                     <<"expected peers to be a string or a list"/utf8>>}}
     end.
 
--file("src/tracker.gleam", 59).
+-file("src/tracker.gleam", 41).
 -spec construct_query_string(
     bitstring(),
     integer(),
@@ -276,7 +276,7 @@ describe_error(Error) ->
             end;
 
         {decode_error, Err@1} ->
-            <<"Decoding: "/utf8, (bencode:describe_error(Err@1))/binary>>;
+            <<"Tracker: "/utf8, (bencode:describe_error(Err@1))/binary>>;
 
         {invalid_response, Msg} ->
             Msg

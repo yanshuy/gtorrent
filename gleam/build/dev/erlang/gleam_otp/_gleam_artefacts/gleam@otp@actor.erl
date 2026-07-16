@@ -155,47 +155,48 @@
     " ```\n"
 ).
 
--type message(YB) :: {message, YB} |
+-type message(FKY) :: {message, FKY} |
     {system, gleam@otp@system:system_message()} |
     {unexpected, gleam@dynamic:dynamic_()}.
 
--opaque next(YC, YD) :: {continue,
-        YC,
-        gleam@option:option(gleam@erlang@process:selector(YD))} |
+-opaque next(FKZ, FLA) :: {continue,
+        FKZ,
+        gleam@option:option(gleam@erlang@process:selector(FLA))} |
     {stop, gleam@erlang@process:exit_reason()}.
 
--type self(YE, YF) :: {self,
+-type self(FLB, FLC) :: {self,
         gleam@otp@system:mode(),
         gleam@erlang@process:pid_(),
-        YE,
-        gleam@erlang@process:selector(message(YF)),
+        FLB,
+        gleam@erlang@process:selector(message(FLC)),
         gleam@otp@system:debug_state(),
-        fun((YE, YF) -> next(YE, YF))}.
+        fun((FLB, FLC) -> next(FLB, FLC))}.
 
--type started(YG) :: {started, gleam@erlang@process:pid_(), YG}.
+-type started(FLD) :: {started, gleam@erlang@process:pid_(), FLD}.
 
--opaque initialised(YH, YI, YJ) :: {initialised,
-        YH,
-        gleam@option:option(gleam@erlang@process:selector(YI)),
-        YJ}.
+-opaque initialised(FLE, FLF, FLG) :: {initialised,
+        FLE,
+        gleam@option:option(gleam@erlang@process:selector(FLF)),
+        FLG}.
 
--opaque builder(YK, YL, YM) :: {builder,
-        fun((gleam@erlang@process:subject(YL)) -> {ok, initialised(YK, YL, YM)} |
+-opaque builder(FLH, FLI, FLJ) :: {builder,
+        fun((gleam@erlang@process:subject(FLI)) -> {ok,
+                initialised(FLH, FLI, FLJ)} |
             {error, binary()}),
         integer(),
-        fun((YK, YL) -> next(YK, YL)),
-        gleam@option:option(gleam@erlang@process:name(YL))}.
+        fun((FLH, FLI) -> next(FLH, FLI)),
+        gleam@option:option(gleam@erlang@process:name(FLI))}.
 
 -type start_error() :: init_timeout |
     {init_failed, binary()} |
     {init_exited, gleam@erlang@process:exit_reason()}.
 
--type start_init_message(YN) :: {ack, {ok, YN} | {error, binary()}} |
+-type start_init_message(FLK) :: {ack, {ok, FLK} | {error, binary()}} |
     {mon, gleam@erlang@process:down()}.
 
 -file("src/gleam/otp/actor.gleam", 185).
 ?DOC(" Indicate the actor should continue, processing any waiting or future messages.\n").
--spec continue(YS) -> next(YS, any()).
+-spec continue(FLP) -> next(FLP, any()).
 continue(State) ->
     {continue, State, none}.
 
@@ -226,7 +227,7 @@ stop_abnormal(Reason) ->
     " going forward. This replaces any selector that was previously given\n"
     " in the actor's `init` callback, or in any previous `Next` value.\n"
 ).
--spec with_selector(next(AAE, AAF), gleam@erlang@process:selector(AAF)) -> next(AAE, AAF).
+-spec with_selector(next(FMB, FMC), gleam@erlang@process:selector(FMC)) -> next(FMB, FMC).
 with_selector(Value, Selector) ->
     case Value of
         {continue, State, _} ->
@@ -241,7 +242,7 @@ with_selector(Value, Selector) ->
     " Takes the post-initialisation state of the actor. This state will be passed\n"
     " to the `on_message` callback each time a message is received.\n"
 ).
--spec initialised(AAL) -> initialised(AAL, any(), nil).
+-spec initialised(FMI) -> initialised(FMI, any(), nil).
 initialised(State) ->
     {initialised, State, none, nil}.
 
@@ -253,9 +254,9 @@ initialised(State) ->
     " selector then the actor will discard it and log a warning.\n"
 ).
 -spec selecting(
-    initialised(AAQ, any(), AAS),
-    gleam@erlang@process:selector(AAW)
-) -> initialised(AAQ, AAW, AAS).
+    initialised(FMN, any(), FMP),
+    gleam@erlang@process:selector(FMT)
+) -> initialised(FMN, FMT, FMP).
 selecting(Initialised, Selector) ->
     {initialised,
         erlang:element(2, Initialised),
@@ -267,7 +268,7 @@ selecting(Initialised, Selector) ->
     " Add the data to return to the parent process. This might be a subject that\n"
     " the actor will receive messages over.\n"
 ).
--spec returning(initialised(ABB, ABC, any()), ABH) -> initialised(ABB, ABC, ABH).
+-spec returning(initialised(FMY, FMZ, any()), FNE) -> initialised(FMY, FMZ, FNE).
 returning(Initialised, Return) ->
     {initialised,
         erlang:element(2, Initialised),
@@ -286,7 +287,7 @@ returning(Initialised, Return) ->
     " If you wish to create an actor with some other initialisation logic that\n"
     " runs before it starts handling messages, see `new_with_initialiser`.\n"
 ).
--spec new(ABL) -> builder(ABL, ABM, gleam@erlang@process:subject(ABM)).
+-spec new(FNI) -> builder(FNI, FNJ, gleam@erlang@process:subject(FNJ)).
 new(State) ->
     Initialise = fun(Subject) -> _pipe = initialised(State),
         _pipe@1 = returning(_pipe, Subject),
@@ -314,9 +315,9 @@ new(State) ->
 ).
 -spec new_with_initialiser(
     integer(),
-    fun((gleam@erlang@process:subject(ABR)) -> {ok, initialised(ABT, ABR, ABU)} |
+    fun((gleam@erlang@process:subject(FNO)) -> {ok, initialised(FNQ, FNO, FNR)} |
         {error, binary()})
-) -> builder(ABT, ABR, ABU).
+) -> builder(FNQ, FNO, FNR).
 new_with_initialiser(Timeout, Initialise) ->
     {builder, Initialise, Timeout, fun(State, _) -> continue(State) end, none}.
 
@@ -328,7 +329,7 @@ new_with_initialiser(Timeout, Initialise) ->
     " Actors handle messages sequentially, later messages being handled after the\n"
     " previous one has been handled.\n"
 ).
--spec on_message(builder(ACD, ACE, ACF), fun((ACD, ACE) -> next(ACD, ACE))) -> builder(ACD, ACE, ACF).
+-spec on_message(builder(FOA, FOB, FOC), fun((FOA, FOB) -> next(FOA, FOB))) -> builder(FOA, FOB, FOC).
 on_message(Builder, Handler) ->
     {builder,
         erlang:element(2, Builder),
@@ -350,7 +351,7 @@ on_message(Builder, Handler) ->
     " When this function is used the actor's default subject will be a named\n"
     " subject using this name.\n"
 ).
--spec named(builder(ACO, ACP, ACQ), gleam@erlang@process:name(ACP)) -> builder(ACO, ACP, ACQ).
+-spec named(builder(FOL, FOM, FON), gleam@erlang@process:name(FOM)) -> builder(FOL, FOM, FON).
 named(Builder, Name) ->
     {builder,
         erlang:element(2, Builder),
@@ -374,7 +375,7 @@ exit_process(Reason) ->
     Reason.
 
 -file("src/gleam/otp/actor.gleam", 443).
--spec select_system_messages(gleam@erlang@process:selector(message(ADD))) -> gleam@erlang@process:selector(message(ADD)).
+-spec select_system_messages(gleam@erlang@process:selector(message(FPA))) -> gleam@erlang@process:selector(message(FPA)).
 select_system_messages(Selector) ->
     _pipe = Selector,
     gleam@erlang@process:select_record(
@@ -385,7 +386,7 @@ select_system_messages(Selector) ->
     ).
 
 -file("src/gleam/otp/actor.gleam", 412).
--spec receive_message(self(any(), ACZ)) -> message(ACZ).
+-spec receive_message(self(any(), FOW)) -> message(FOW).
 receive_message(Self) ->
     Selector = case erlang:element(2, Self) of
         suspended ->
@@ -508,9 +509,9 @@ try_register_self(Name) ->
 
 -file("src/gleam/otp/actor.gleam", 522).
 -spec initialise_actor(
-    builder(any(), any(), ADW),
+    builder(any(), any(), FPT),
     gleam@erlang@process:pid_(),
-    gleam@erlang@process:subject({ok, ADW} | {error, binary()})
+    gleam@erlang@process:subject({ok, FPT} | {error, binary()})
 ) -> gleam@erlang@process:exit_reason().
 initialise_actor(Builder, Parent, Ack) ->
     Result@1 = begin
@@ -563,7 +564,7 @@ initialise_actor(Builder, Parent, Ack) ->
 
 -file("src/gleam/otp/actor.gleam", 592).
 ?DOC(" Starts an actor from a given `Builder`. On failure, `start` returns a `StartError`\n").
--spec start(builder(any(), any(), AEJ)) -> {ok, started(AEJ)} |
+-spec start(builder(any(), any(), FQG)) -> {ok, started(FQG)} |
     {error, start_error()}.
 start(Builder) ->
     Timeout = erlang:element(3, Builder),
@@ -616,7 +617,7 @@ start(Builder) ->
     "\n"
     " This is a re-export of `process.send`, for the sake of convenience.\n"
 ).
--spec send(gleam@erlang@process:subject(AEQ), AEQ) -> nil.
+-spec send(gleam@erlang@process:subject(FQN), FQN) -> nil.
 send(Subject, Msg) ->
     gleam@erlang@process:send(Subject, Msg).
 
@@ -631,9 +632,9 @@ send(Subject, Msg) ->
     " This is a re-export of `process.call`, for the sake of convenience.\n"
 ).
 -spec call(
-    gleam@erlang@process:subject(AES),
+    gleam@erlang@process:subject(FQP),
     integer(),
-    fun((gleam@erlang@process:subject(AEU)) -> AES)
-) -> AEU.
+    fun((gleam@erlang@process:subject(FQR)) -> FQP)
+) -> FQR.
 call(Subject, Timeout, Make_message) ->
     gleam@erlang@process:call(Subject, Timeout, Make_message).

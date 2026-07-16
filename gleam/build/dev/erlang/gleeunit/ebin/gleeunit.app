@@ -2,6 +2,12 @@
     {vsn, "1.11.0"},
     {applications, [gleam_stdlib]},
     {description, "A simple test runner for Gleam, using EUnit on Erlang"},
-    {modules, []},
+    {modules, [gleeunit,
+               gleeunit@internal@gleam_panic,
+               gleeunit@internal@reporting,
+               gleeunit@should,
+               gleeunit_ffi,
+               gleeunit_gleam_panic_ffi,
+               gleeunit_progress]},
     {registered, []}
 ]}.

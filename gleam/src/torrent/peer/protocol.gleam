@@ -1,4 +1,5 @@
 import bencode
+import gleam/bit_array
 import gleam/int
 import gleam/result.{map_error, try}
 import mug.{ConnectionOptions}
@@ -46,9 +47,7 @@ pub fn handshake(endpoint: Endpoint, info_hash: BitArray, peer_id: PeerId) {
   use #(peer_peer_id, reserved) <- try(peer_handshake(socket, info_hash, id))
 
   case reserved {
-    <<_:size(64 - 20), 1:size(1), _:bits>> -> {
-      #(socket, peer_peer_id, True)
-    }
+    <<_:size(64 - 20), 1:size(1), _:bits>> -> #(socket, peer_peer_id, True)
     _ -> #(socket, peer_peer_id, False)
   }
   |> Ok
@@ -73,7 +72,7 @@ fn peer_handshake(
     <<
       19:int,
       "BitTorrent protocol",
-      reserved:size(8)-unit(8)-bits,
+      reserved:bytes-size(8),
       rev_info_hash:bytes-size(20)-unit(8),
       peer_id:bytes-size(20)-unit(8),
     >> -> {
@@ -89,18 +88,18 @@ fn peer_handshake(
 pub fn extension_handshake(socket: mug.Socket) -> Result(Nil, ProtocolError) {
   let id = message_id(Extension)
   let extension_message_id = 0
-
   let payload_dict =
     bencode.encode(
       bencode.BDict([
-        #("m", bencode.BDict([#("ut_metadata", bencode.BInteger(10))])),
+        #("m", bencode.BDict([#("ut_metadata", bencode.BInteger(1))])),
       ]),
     )
+  let message_len = 1 + 1 + bit_array.byte_size(payload_dict)
 
   let extension_message = <<
-    13:big-size(4)-unit(8),
+    message_len:big-size(32),
     id:int,
-    extension_message_id:size(1)-unit(8),
+    extension_message_id:int,
     payload_dict:bits,
   >>
 

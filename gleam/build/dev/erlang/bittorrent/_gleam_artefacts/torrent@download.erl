@@ -51,7 +51,7 @@ new_download(Torrent) ->
     ),
     {torrent_state, Torrent, Pieces, [], maps:new()}.
 
--file("src/torrent/download.gleam", 219).
+-file("src/torrent/download.gleam", 193).
 -spec is_bit_set(bitstring(), integer()) -> boolean().
 is_bit_set(Bits, Index) ->
     case Bits of
@@ -62,7 +62,7 @@ is_bit_set(Bits, Index) ->
             false
     end.
 
--file("src/torrent/download.gleam", 197).
+-file("src/torrent/download.gleam", 171).
 -spec lease_piece(torrent_state(), bitstring()) -> {ok,
         {torrent@torrent:piece_info(), list(torrent@torrent:piece_info())}} |
     {error, nil}.
@@ -110,7 +110,7 @@ handle_download(Writer, State, Mailbox) ->
         fun() -> case gleam@erlang@process:'receive'(Mailbox, 10000) of
                 {ok, Event} ->
                     case Event of
-                        {ready, Peer_id, Bitfield, Reply} ->
+                        {ready, Peer_id, Bitfield} ->
                             Peers = gleam@dict:insert(
                                 erlang:element(5, State),
                                 Peer_id,
@@ -121,22 +121,9 @@ handle_download(Writer, State, Mailbox) ->
                                 erlang:element(3, State),
                                 erlang:element(4, State),
                                 Peers},
-                            Res = lease_piece(State@1, Bitfield),
-                            case Res of
-                                {ok, {Piece, New_pending}} ->
-                                    gleam@erlang@process:send(Reply, Piece),
-                                    New_state = {torrent_state,
-                                        erlang:element(2, State@1),
-                                        New_pending,
-                                        [Piece | erlang:element(4, State@1)],
-                                        erlang:element(5, State@1)},
-                                    handle_download(Writer, New_state, Mailbox);
+                            handle_download(Writer, State@1, Mailbox);
 
-                                {error, _} ->
-                                    handle_download(Writer, State@1, Mailbox)
-                            end;
-
-                        {lease_piece, Peer_id@1, Reply@1} ->
+                        {lease_piece, Peer_id@1, Reply} ->
                             Bitfield@2 = case gleam_stdlib:map_get(
                                 erlang:element(5, State),
                                 Peer_id@1
@@ -148,27 +135,23 @@ handle_download(Writer, State, Mailbox) ->
                                                 file => <<?FILEPATH/utf8>>,
                                                 module => <<"torrent/download"/utf8>>,
                                                 function => <<"handle_download"/utf8>>,
-                                                line => 110,
+                                                line => 96,
                                                 value => _assert_fail,
-                                                start => 3058,
-                                                'end' => 3114,
-                                                pattern_start => 3069,
-                                                pattern_end => 3081})
+                                                start => 2579,
+                                                'end' => 2635,
+                                                pattern_start => 2590,
+                                                pattern_end => 2602})
                             end,
-                            Res@1 = lease_piece(State, Bitfield@2),
-                            case Res@1 of
-                                {ok, {Piece@1, New_pendings}} ->
-                                    gleam@erlang@process:send(Reply@1, Piece@1),
-                                    New_state@1 = {torrent_state,
+                            Res = lease_piece(State, Bitfield@2),
+                            case Res of
+                                {ok, {Piece, New_pendings}} ->
+                                    gleam@erlang@process:send(Reply, Piece),
+                                    New_state = {torrent_state,
                                         erlang:element(2, State),
                                         New_pendings,
-                                        [Piece@1 | erlang:element(4, State)],
+                                        [Piece | erlang:element(4, State)],
                                         erlang:element(5, State)},
-                                    handle_download(
-                                        Writer,
-                                        New_state@1,
-                                        Mailbox
-                                    );
+                                    handle_download(Writer, New_state, Mailbox);
 
                                 {error, _} ->
                                     handle_download(Writer, State, Mailbox)
@@ -185,12 +168,12 @@ handle_download(Writer, State, Mailbox) ->
                                         5,
                                         erlang:element(2, State)
                                     ),
-                                    Res@2 = (erlang:element(3, Writer))(
+                                    Res@1 = (erlang:element(3, Writer))(
                                         Writer,
                                         Offset,
                                         Data
                                     ),
-                                    case Res@2 of
+                                    case Res@1 of
                                         {ok, _} ->
                                             nil;
 
@@ -200,7 +183,7 @@ handle_download(Writer, State, Mailbox) ->
                                                     file => <<?FILEPATH/utf8>>,
                                                     module => <<"torrent/download"/utf8>>,
                                                     function => <<"handle_download"/utf8>>,
-                                                    line => 133})
+                                                    line => 119})
                                     end
                                 end
                             ),
@@ -208,8 +191,8 @@ handle_download(Writer, State, Mailbox) ->
                                 _pipe@2 = erlang:element(4, State),
                                 gleam@list:filter(
                                     _pipe@2,
-                                    fun(Piece@2) ->
-                                        erlang:element(2, Piece@2) /= Index
+                                    fun(Piece@1) ->
+                                        erlang:element(2, Piece@1) /= Index
                                     end
                                 )
                             end,
@@ -219,14 +202,14 @@ handle_download(Writer, State, Mailbox) ->
                                     fun(P) -> erlang:element(2, P) end
                                 ),
                                 nil,
-                                139
+                                125
                             ),
-                            New_state@2 = {torrent_state,
+                            New_state@1 = {torrent_state,
                                 erlang:element(2, State),
                                 erlang:element(3, State),
                                 New_leased,
                                 erlang:element(5, State)},
-                            handle_download(Writer, New_state@2, Mailbox);
+                            handle_download(Writer, New_state@1, Mailbox);
 
                         {peer_disconnected, Peer_id@2, Reason} ->
                             Id@1 = begin
@@ -235,7 +218,7 @@ handle_download(Writer, State, Mailbox) ->
                                 gleam_stdlib:base16_encode(_pipe@3)
                             end,
                             gleam_stdlib:print_error(
-                                <<<<<<"Stopping peer session with peer "/utf8,
+                                <<<<<<"Stopping peer session with: "/utf8,
                                             Id@1/binary>>/binary,
                                         "\nReason: "/utf8>>/binary,
                                     Reason/binary>>
@@ -244,12 +227,12 @@ handle_download(Writer, State, Mailbox) ->
                                 erlang:element(5, State),
                                 Peer_id@2
                             ),
-                            New_state@3 = {torrent_state,
+                            New_state@2 = {torrent_state,
                                 erlang:element(2, State),
                                 erlang:element(3, State),
                                 erlang:element(4, State),
                                 Peers@1},
-                            handle_download(Writer, New_state@3, Mailbox)
+                            handle_download(Writer, New_state@2, Mailbox)
                     end;
 
                 {error, _} ->
@@ -257,7 +240,7 @@ handle_download(Writer, State, Mailbox) ->
             end end
     ).
 
--file("src/torrent/download.gleam", 255).
+-file("src/torrent/download.gleam", 229).
 -spec describe_error(torrent_error()) -> binary().
 describe_error(Error) ->
     case Error of
@@ -276,46 +259,7 @@ describe_error(Error) ->
                 (simplifile:describe_error(File_err))/binary>>
     end.
 
--file("src/torrent/download.gleam", 180).
--spec peer_worker(
-    gleam@erlang@process:subject(torrent@messages:peer_event()),
-    torrent@peer@protocol:endpoint(),
-    bitstring(),
-    torrent@peer@protocol:peer_id()
-) -> {ok, nil} | {error, torrent_error()}.
-peer_worker(Parent_subject, Endpoint, Info_hash, Peer_id) ->
-    gleam@result:'try'(
-        begin
-            _pipe = torrent@peer@protocol:handshake(
-                Endpoint,
-                Info_hash,
-                Peer_id
-            ),
-            gleam@result:map_error(
-                _pipe,
-                fun(Field@0) -> {protocol_error, Field@0} end
-            )
-        end,
-        fun(_use0) ->
-            {Socket, Peer_peer_id} = _use0,
-            gleam@result:'try'(
-                begin
-                    _pipe@1 = torrent@peer@session:start_session(
-                        Parent_subject,
-                        Socket,
-                        Peer_peer_id
-                    ),
-                    gleam@result:map_error(
-                        _pipe@1,
-                        fun(Field@0) -> {peer_error, Field@0} end
-                    )
-                end,
-                fun(_) -> {ok, nil} end
-            )
-        end
-    ).
-
--file("src/torrent/download.gleam", 161).
+-file("src/torrent/download.gleam", 147).
 -spec connect_with_peers(
     gleam@erlang@process:subject(torrent@messages:peer_event()),
     list(torrent@peer@protocol:endpoint()),
@@ -323,28 +267,38 @@ peer_worker(Parent_subject, Endpoint, Info_hash, Peer_id) ->
     torrent@peer@protocol:peer_id()
 ) -> nil.
 connect_with_peers(Main_subject, Endpoints, Info_hash, Peer_id) ->
-    _pipe = Endpoints,
-    _pipe@1 = gleam@list:take(_pipe, 6),
-    gleam@list:each(
-        _pipe@1,
-        fun(Endpoint) ->
-            proc_lib:spawn_link(
-                fun() ->
-                    case peer_worker(Main_subject, Endpoint, Info_hash, Peer_id) of
-                        {ok, _} ->
-                            nil;
+    Spawn_worker = fun(Endpoint) ->
+        proc_lib:spawn_link(
+            fun() ->
+                Session = begin
+                    _pipe = torrent@peer@session:start_session(
+                        Main_subject,
+                        Endpoint,
+                        Info_hash,
+                        Peer_id
+                    ),
+                    gleam@result:map_error(
+                        _pipe,
+                        fun(Field@0) -> {peer_error, Field@0} end
+                    )
+                end,
+                case Session of
+                    {ok, _} ->
+                        nil;
 
-                        {error, Err} ->
-                            gleam_stdlib:println(
-                                <<<<(erlang:element(2, Endpoint))/binary,
-                                        "is malicious"/utf8>>/binary,
-                                    (describe_error(Err))/binary>>
-                            )
-                    end
+                    {error, Err} ->
+                        gleam_stdlib:println(
+                            <<<<(erlang:element(2, Endpoint))/binary,
+                                    "is malicious"/utf8>>/binary,
+                                (describe_error(Err))/binary>>
+                        )
                 end
-            )
-        end
-    ).
+            end
+        )
+    end,
+    _pipe@1 = Endpoints,
+    _pipe@2 = gleam@list:take(_pipe@1, 6),
+    gleam@list:each(_pipe@2, Spawn_worker).
 
 -file("src/torrent/download.gleam", 63).
 -spec download_torrent(
@@ -364,7 +318,7 @@ download_torrent(Download_path, Endpoints, Torrent, Peer_id) ->
     ),
     handle_download(Writer, new_download(Torrent), Main_subject).
 
--file("src/torrent/download.gleam", 226).
+-file("src/torrent/download.gleam", 200).
 -spec download_piece(
     binary(),
     torrent@peer@protocol:endpoint(),
@@ -386,7 +340,7 @@ download_piece(Download_path, Endpoint, Torrent, Peer_id, Piece) ->
             )
         end,
         fun(_use0) ->
-            {Socket, Peer_peer_id} = _use0,
+            {Socket, Peer_peer_id, _} = _use0,
             gleam@result:'try'(
                 begin
                     _pipe@1 = torrent@peer@session:download_piece(

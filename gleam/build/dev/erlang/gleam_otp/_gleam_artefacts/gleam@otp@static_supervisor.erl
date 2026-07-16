@@ -51,19 +51,19 @@
 
 -type erlang_start_flags() :: any().
 
--type erlang_start_flag(BGI) :: {strategy, strategy()} |
+-type erlang_start_flag(GSF) :: {strategy, strategy()} |
     {intensity, integer()} |
     {period, integer()} |
     {auto_shutdown, auto_shutdown()} |
-    {gleam_phantom, BGI}.
+    {gleam_phantom, GSF}.
 
 -type erlang_child_spec() :: any().
 
--type erlang_child_spec_property(BGJ) :: {id, integer()} |
+-type erlang_child_spec_property(GSG) :: {id, integer()} |
     {start,
         {gleam@erlang@atom:atom_(),
             gleam@erlang@atom:atom_(),
-            list(fun(() -> {ok, gleam@otp@actor:started(BGJ)} |
+            list(fun(() -> {ok, gleam@otp@actor:started(GSG)} |
                 {error, gleam@otp@actor:start_error()}))}} |
     {restart, gleam@otp@supervision:restart()} |
     {significant, boolean()} |

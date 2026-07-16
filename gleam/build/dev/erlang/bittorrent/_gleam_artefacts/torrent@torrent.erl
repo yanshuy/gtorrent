@@ -160,21 +160,21 @@ parse_magnet(Magnet_link) ->
                                                         Xt,
                                                         <<"urn:btih:"/utf8>>
                                                     ),
-                                                    _pipe@9 = gleam@result:replace_error(
+                                                    _pipe@10 = gleam@result:'try'(
                                                         _pipe@8,
-                                                        <<"invalid 'xt' (Info Hash)"/utf8>>
-                                                    ),
-                                                    gleam@result:map(
-                                                        _pipe@9,
                                                         fun(Tuple) ->
-                                                            _pipe@10 = erlang:element(
+                                                            _pipe@9 = erlang:element(
                                                                 2,
                                                                 Tuple
                                                             ),
-                                                            gleam_stdlib:identity(
-                                                                _pipe@10
+                                                            gleam_stdlib:base16_decode(
+                                                                _pipe@9
                                                             )
                                                         end
+                                                    ),
+                                                    gleam@result:replace_error(
+                                                        _pipe@10,
+                                                        <<"invalid 'xt' (Info Hash)"/utf8>>
                                                     )
                                                 end,
                                                 fun(Info_hash) ->

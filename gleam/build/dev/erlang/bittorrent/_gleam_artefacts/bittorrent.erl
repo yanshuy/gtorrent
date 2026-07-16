@@ -123,7 +123,7 @@ cmd_magnet_handshake(Magnet_link) ->
                             _pipe@2 = tracker:get_peers(
                                 erlang:element(2, Magnet_info),
                                 erlang:element(3, Magnet_info),
-                                0,
+                                10,
                                 Peer_id
                             ),
                             gleam@result:map_error(
@@ -132,9 +132,9 @@ cmd_magnet_handshake(Magnet_link) ->
                             )
                         end,
                         fun(Peers) ->
-                            gleam@bool:guard(
+                            gleam@bool:lazy_guard(
                                 gleam@list:is_empty(Peers),
-                                begin
+                                fun() ->
                                     gleam_stdlib:println(<<"No peers"/utf8>>),
                                     {ok, nil}
                                 end,
@@ -150,10 +150,10 @@ cmd_magnet_handshake(Magnet_link) ->
                                                         function => <<"cmd_magnet_handshake"/utf8>>,
                                                         line => 278,
                                                         value => _assert_fail,
-                                                        start => 7125,
-                                                        'end' => 7155,
-                                                        pattern_start => 7136,
-                                                        pattern_end => 7147}
+                                                        start => 7139,
+                                                        'end' => 7169,
+                                                        pattern_start => 7150,
+                                                        pattern_end => 7161}
                                                 )
                                     end,
                                     gleam@result:'try'(
@@ -181,7 +181,7 @@ cmd_magnet_handshake(Magnet_link) ->
                                                     )
                                                 end,
                                                 fun(_use0) ->
-                                                    {_, Peer_peer_id} = _use0,
+                                                    {_, Peer_peer_id, _} = _use0,
                                                     {peer_id, Id} = Peer_peer_id,
                                                     gleam_stdlib:println(
                                                         <<"Peer ID: "/utf8,
@@ -481,7 +481,7 @@ cmd_handshake(Filename, Endpoint) ->
                                     )
                                 end,
                                 fun(_use0) ->
-                                    {_, Peer_peer_id} = _use0,
+                                    {_, Peer_peer_id, _} = _use0,
                                     {peer_id, Id} = Peer_peer_id,
                                     gleam_stdlib:println(
                                         <<"Peer ID: "/utf8,

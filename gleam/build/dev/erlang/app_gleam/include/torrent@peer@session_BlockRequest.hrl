@@ -1,1 +1,0 @@
--record(block_request, {'begin' :: integer(), length :: integer()}).

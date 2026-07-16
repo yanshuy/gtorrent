@@ -3,10 +3,7 @@
 -define(FILEPATH, "src/torrent/messages.gleam").
 -export_type([peer_event/0]).
 
--type peer_event() :: {ready,
-        torrent@peer@protocol:peer_id(),
-        bitstring(),
-        gleam@erlang@process:subject(torrent@torrent:piece_info())} |
+-type peer_event() :: {ready, torrent@peer@protocol:peer_id(), bitstring()} |
     {lease_piece,
         torrent@peer@protocol:peer_id(),
         gleam@erlang@process:subject(torrent@torrent:piece_info())} |
