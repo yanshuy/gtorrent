@@ -21,12 +21,12 @@
 
 -type start_error() :: {start_error, binary()}.
 
--file("src/bittorrent.gleam", 344).
+-file("src/bittorrent.gleam", 347).
 -spec stop(integer()) -> nil.
 stop(Code) ->
     init:stop(Code).
 
--file("src/bittorrent.gleam", 325).
+-file("src/bittorrent.gleam", 328).
 -spec describe_cmd_error(cmd_error()) -> binary().
 describe_cmd_error(Error) ->
     case Error of
@@ -84,7 +84,7 @@ new_endpoint(Endpoint) ->
             {error, nil}
     end.
 
--file("src/bittorrent.gleam", 297).
+-file("src/bittorrent.gleam", 300).
 -spec load_peer_id() -> {ok, torrent@peer@protocol:peer_id()} |
     {error, simplifile:file_error()}.
 load_peer_id() ->
@@ -181,21 +181,34 @@ cmd_magnet_handshake(Magnet_link) ->
                                                     )
                                                 end,
                                                 fun(_use0) ->
-                                                    {_, Peer_peer_id, _} = _use0,
-                                                    {peer_id, Id} = Peer_peer_id,
-                                                    gleam_stdlib:println(
-                                                        <<"Peer ID: "/utf8,
-                                                            (begin
-                                                                _pipe@5 = Id,
-                                                                _pipe@6 = gleam_stdlib:base16_encode(
-                                                                    _pipe@5
-                                                                ),
-                                                                string:lowercase(
-                                                                    _pipe@6
-                                                                )
-                                                            end)/binary>>
-                                                    ),
-                                                    {ok, nil}
+                                                    {Socket, Peer_peer_id, _} = _use0,
+                                                    gleam@result:'try'(
+                                                        begin
+                                                            _pipe@5 = torrent@peer@protocol:extension_handshake(
+                                                                Socket
+                                                            ),
+                                                            gleam@result:map_error(
+                                                                _pipe@5,
+                                                                fun(Field@0) -> {protocol_error, Field@0} end
+                                                            )
+                                                        end,
+                                                        fun(_) ->
+                                                            {peer_id, Id} = Peer_peer_id,
+                                                            gleam_stdlib:println(
+                                                                <<"Peer ID: "/utf8,
+                                                                    (begin
+                                                                        _pipe@6 = Id,
+                                                                        _pipe@7 = gleam_stdlib:base16_encode(
+                                                                            _pipe@6
+                                                                        ),
+                                                                        string:lowercase(
+                                                                            _pipe@7
+                                                                        )
+                                                                    end)/binary>>
+                                                            ),
+                                                            {ok, nil}
+                                                        end
+                                                    )
                                                 end
                                             )
                                         end
@@ -690,7 +703,7 @@ execute_cmd(Args) ->
             {error, {unknown_command, Command}}
     end.
 
--file("src/bittorrent.gleam", 361).
+-file("src/bittorrent.gleam", 364).
 -spec start(list(application())) -> nil.
 start(Apps) ->
     gleam@list:each(Apps, fun(App) -> case bittorrent_ffi:start(App) of
