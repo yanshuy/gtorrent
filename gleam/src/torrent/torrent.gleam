@@ -1,10 +1,11 @@
 import bencode
+import gleam/bit_array
 import gleam/crypto
 import gleam/dict
 import gleam/list
-import gleam/result.{try}
-import gleam/set
-import torrent/peer/protocol
+import gleam/result.{replace_error, try}
+import gleam/string
+import gleam/uri
 
 pub type TorrentInfo {
   TorrentInfo(
@@ -43,6 +44,43 @@ pub fn parse(
   ))
 }
 
+pub type MagnetInfo {
+  MagnetInfo(announce: String, info_hash: BitArray)
+}
+
+pub fn parse_magnet(magnet_link: String) -> Result(MagnetInfo, String) {
+  use #(_, query_param) <- try(
+    string.split_once(magnet_link, "?")
+    |> replace_error("invalid magnet link"),
+  )
+
+  use dict <- try(
+    query_param
+    |> string.split("&")
+    |> list.try_map(string.split_once(_, "="))
+    |> replace_error("invalid magnet link")
+    |> result.map(dict.from_list),
+  )
+
+  use tr <- try(
+    dict.get(dict, "tr") |> replace_error("'tr' (Tracker URL) is missing"),
+  )
+  use announce <- try(
+    uri.percent_decode(tr) |> replace_error("invalid 'tr' (Tracker URL)"),
+  )
+
+  use xt <- try(
+    dict.get(dict, "xt") |> replace_error("'xt' (Info Hash) is missing"),
+  )
+  use info_hash <- try(
+    string.split_once(xt, "urn:btih:")
+    |> result.try(fn(tuple) { tuple.1 |> bit_array.base16_decode })
+    |> replace_error("invalid 'xt' (Info Hash)"),
+  )
+
+  MagnetInfo(announce: announce, info_hash: info_hash) |> Ok
+}
+
 pub fn info_hash(info_entries: List(#(String, bencode.Bencode))) -> BitArray {
   let bits =
     bencode.BDict(info_entries)
@@ -70,15 +108,6 @@ fn split_piece_hashes_loop(
 
 pub type PieceInfo {
   PieceInfo(index: Int, hash: BitArray, length: Int)
-}
-
-pub type Torrent {
-  Torrent(
-    info: TorrentInfo,
-    download_path: String,
-    peers: set.Set(protocol.PeerId),
-    pending_pieces: List(PieceInfo),
-  )
 }
 
 pub const block_size = 16_384

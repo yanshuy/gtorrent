@@ -53,7 +53,14 @@ connect(Endpoint) ->
 peer_handshake(Socket, Info_hash, Peer_id) ->
     Handshake_msg = <<19/integer,
         "BitTorrent protocol"/utf8,
-        0:8/unit:8,
+        16#00,
+        16#00,
+        16#00,
+        16#00,
+        16#00,
+        16#10,
+        16#00,
+        16#00,
         Info_hash/bitstring,
         Peer_id/bitstring>>,
     gleam@result:'try'(
@@ -115,7 +122,7 @@ handshake(Endpoint, Info_hash, Peer_id) ->
         end
     ).
 
--file("src/torrent/peer/protocol.gleam", 83).
+-file("src/torrent/peer/protocol.gleam", 80).
 -spec log(peer_message()) -> peer_message().
 log(M) ->
     case M of
@@ -126,14 +133,14 @@ log(M) ->
             M
     end.
 
--file("src/torrent/peer/protocol.gleam", 90).
+-file("src/torrent/peer/protocol.gleam", 87).
 -spec send_message(mug:socket(), bitstring()) -> {ok, nil} |
     {error, protocol_error()}.
 send_message(Socket, Message) ->
     _pipe = mug:send(Socket, Message),
     gleam@result:map_error(_pipe, fun(Field@0) -> {t_c_p_error, Field@0} end).
 
--file("src/torrent/peer/protocol.gleam", 118).
+-file("src/torrent/peer/protocol.gleam", 115).
 -spec parse_message(bitstring()) -> {ok, peer_message()} |
     {error, protocol_error()}.
 parse_message(Message) ->
@@ -145,12 +152,12 @@ parse_message(Message) ->
                         file => <<?FILEPATH/utf8>>,
                         module => <<"torrent/peer/protocol"/utf8>>,
                         function => <<"parse_message"/utf8>>,
-                        line => 119,
+                        line => 116,
                         value => _assert_fail,
-                        start => 2677,
-                        'end' => 2726,
-                        pattern_start => 2688,
-                        pattern_end => 2716})
+                        start => 2694,
+                        'end' => 2743,
+                        pattern_start => 2705,
+                        pattern_end => 2733})
     end,
     case Message_id@1 of
         0 ->
@@ -182,12 +189,12 @@ parse_message(Message) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"torrent/peer/protocol"/utf8>>,
                                 function => <<"parse_message"/utf8>>,
-                                line => 128,
+                                line => 125,
                                 value => _assert_fail@1,
-                                start => 2904,
-                                'end' => 3048,
-                                pattern_start => 2915,
-                                pattern_end => 3038})
+                                start => 2921,
+                                'end' => 3065,
+                                pattern_start => 2932,
+                                pattern_end => 3055})
             end,
             {ok, {request, Piece_index@1, Begin@1, Length@1}};
 
@@ -202,12 +209,12 @@ parse_message(Message) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"torrent/peer/protocol"/utf8>>,
                                 function => <<"parse_message"/utf8>>,
-                                line => 136,
+                                line => 133,
                                 value => _assert_fail@2,
-                                start => 3118,
-                                'end' => 3246,
-                                pattern_start => 3129,
-                                pattern_end => 3236})
+                                start => 3135,
+                                'end' => 3263,
+                                pattern_start => 3146,
+                                pattern_end => 3253})
             end,
             {ok, {piece, Piece_index@3, Begin@3, Block@1}};
 
@@ -215,7 +222,7 @@ parse_message(Message) ->
             {error, {unknown_message_id, Id}}
     end.
 
--file("src/torrent/peer/protocol.gleam", 97).
+-file("src/torrent/peer/protocol.gleam", 94).
 -spec receive_message(mug:socket()) -> {ok, peer_message()} |
     {error, protocol_error()}.
 receive_message(Socket) ->
@@ -236,12 +243,12 @@ receive_message(Socket) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"torrent/peer/protocol"/utf8>>,
                                 function => <<"receive_message"/utf8>>,
-                                line => 103,
+                                line => 100,
                                 value => _assert_fail,
-                                start => 2275,
-                                'end' => 2336,
-                                pattern_start => 2286,
-                                pattern_end => 2329})
+                                start => 2292,
+                                'end' => 2353,
+                                pattern_start => 2303,
+                                pattern_end => 2346})
             end,
             case Message_length@1 of
                 0 ->
@@ -266,7 +273,7 @@ receive_message(Socket) ->
         end
     ).
 
--file("src/torrent/peer/protocol.gleam", 147).
+-file("src/torrent/peer/protocol.gleam", 144).
 -spec message_id(peer_message()) -> integer().
 message_id(Message) ->
     case Message of
@@ -295,7 +302,7 @@ message_id(Message) ->
             7
     end.
 
--file("src/torrent/peer/protocol.gleam", 169).
+-file("src/torrent/peer/protocol.gleam", 166).
 -spec describe_error(protocol_error()) -> binary().
 describe_error(Error) ->
     case Error of

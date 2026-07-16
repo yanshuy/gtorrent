@@ -1,0 +1,1 @@
+-record(magnet_info, {announce :: binary(), info_hash :: bitstring()}).

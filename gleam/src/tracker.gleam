@@ -9,7 +9,6 @@ import gleam/result.{map_error, replace_error, try}
 import gleam/string
 import helpers
 import torrent/peer/protocol
-import torrent/torrent
 
 pub type TrackerError {
   InvalidUrl
@@ -19,22 +18,49 @@ pub type TrackerError {
 }
 
 pub fn get_peers(
-  torrent: torrent.TorrentInfo,
+  tracker_url: String,
+  info_hash: BitArray,
+  length: Int,
   peer_id: protocol.PeerId,
 ) -> Result(List(String), TrackerError) {
-  use req <- try(request.to(torrent.announce) |> replace_error(InvalidUrl))
+  use req <- try(request.to(tracker_url) |> replace_error(InvalidUrl))
   let req = request.set_body(req, <<>>)
 
-  use query_string <- try(construct_query_string(torrent, peer_id))
+  use query_string <- try(construct_query_string(info_hash, length, peer_id))
   let req = request.Request(..req, query: option.Some(query_string))
 
   use resp <- try(httpc.send_bits(req) |> map_error(HttpError))
   use resp_bencode <- try(bencode.decode(resp.body) |> map_error(DecodeError))
+  echo resp_bencode
 
   use dict <- try(bencode.dict(resp_bencode) |> map_error(DecodeError))
   use peers <- try(bencode.get_value(dict, "peers") |> map_error(DecodeError))
 
   decode_peers(peers)
+}
+
+fn construct_query_string(
+  info_hash: BitArray,
+  length: Int,
+  peer_id: protocol.PeerId,
+) -> Result(String, TrackerError) {
+  let encoded = info_hash |> helpers.percent_encode
+  let protocol.PeerId(id) = peer_id
+  let peer_id = id |> helpers.percent_encode
+  let left = length |> int.to_string
+
+  Ok(
+    [
+      "info_hash=" <> encoded,
+      "peer_id=" <> peer_id,
+      "port=6881",
+      "uploaded=0",
+      "downloaded=0",
+      "left=" <> left,
+      "compact=1",
+    ]
+    |> string.join("&"),
+  )
 }
 
 fn decode_peers(
@@ -53,29 +79,6 @@ fn decode_peers(
 
     _ -> Error(InvalidResponse("expected peers to be a string or a list"))
   }
-}
-
-fn construct_query_string(
-  torrent: torrent.TorrentInfo,
-  peer_id: protocol.PeerId,
-) -> Result(String, TrackerError) {
-  let encoded = torrent.info_hash |> helpers.percent_encode
-  let protocol.PeerId(id) = peer_id
-  let peer_id = id |> helpers.percent_encode
-  let left = torrent.length |> int.to_string
-
-  Ok(
-    [
-      "info_hash=" <> encoded,
-      "peer_id=" <> peer_id,
-      "port=6881",
-      "uploaded=0",
-      "downloaded=0",
-      "left=" <> left,
-      "compact=1",
-    ]
-    |> string.join("&"),
-  )
 }
 
 pub fn split_peers(
@@ -125,7 +128,7 @@ pub fn describe_error(error: TrackerError) -> String {
         httpc.ResponseTimeout -> "Tracker request timed out"
       }
     }
-    DecodeError(err) -> "Decoding: " <> bencode.describe_error(err)
+    DecodeError(err) -> "Tracker: " <> bencode.describe_error(err)
     InvalidResponse(msg) -> msg
   }
 }

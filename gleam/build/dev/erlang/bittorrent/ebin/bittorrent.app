@@ -13,6 +13,12 @@
                     mug,
                     simplifile]},
     {description, ""},
-    {modules, [bittorrent]},
+    {modules, [bittorrent,
+               torrent@download,
+               torrent@messages,
+               torrent@peer@protocol,
+               torrent@peer@session,
+               torrent@torrent,
+               tracker]},
     {registered, []}
 ]}.

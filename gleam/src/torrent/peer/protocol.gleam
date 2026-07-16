@@ -51,11 +51,8 @@ fn peer_handshake(
   peer_id: BitArray,
 ) -> Result(PeerId, ProtocolError) {
   let handshake_msg = <<
-    19:int,
-    "BitTorrent protocol",
-    0:size(8)-unit(8),
-    info_hash:bits,
-    peer_id:bits,
+    19:int, "BitTorrent protocol", 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+    0x00, info_hash:bits, peer_id:bits,
   >>
   use _ <- try(mug.send(socket, handshake_msg) |> map_error(TCPError))
 

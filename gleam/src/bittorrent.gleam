@@ -1,15 +1,14 @@
 import argv
 import bencode
 import gleam/bit_array
+import gleam/bool
 import gleam/crypto
-import gleam/dict
 import gleam/int
 import gleam/io
 import gleam/json
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
-import gleam/uri
 import simplifile
 import torrent/download
 import torrent/peer/protocol
@@ -80,6 +79,12 @@ pub fn execute_cmd(args: List(String)) -> Result(Nil, CmdError) {
         _ -> Error(InsufficientArguments("magnet_parse"))
       }
 
+    ["magnet_handshake", ..rest] ->
+      case rest {
+        [magnet_link] -> cmd_magnet_handshake(magnet_link)
+        _ -> Error(InsufficientArguments("magnet_handshake"))
+      }
+
     [command, ..] -> Error(UnknownCommand(command))
   }
 }
@@ -130,7 +135,13 @@ fn cmd_peers(filename: String) -> Result(Nil, CmdError) {
 
   use torrent <- try(info(filename))
   use peers <- try(
-    tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
+    tracker.get_peers(
+      torrent.announce,
+      torrent.info_hash,
+      torrent.length,
+      peer_id,
+    )
+    |> map_error(TrackerError),
   )
   io.println(string.join(peers, with: "\n"))
   Ok(Nil)
@@ -177,7 +188,12 @@ fn cmd_download_piece(
   use torrent <- try(info(torrent_file))
 
   use peers <- try(
-    tracker.get_peers(torrent, peer_id)
+    tracker.get_peers(
+      torrent.announce,
+      torrent.info_hash,
+      torrent.length,
+      peer_id,
+    )
     |> map_error(TrackerError),
   )
 
@@ -210,7 +226,13 @@ fn cmd_download(
   use torrent <- try(info(torrent_file))
 
   use peer_endpoints <- try(
-    tracker.get_peers(torrent, peer_id) |> map_error(TrackerError),
+    tracker.get_peers(
+      torrent.announce,
+      torrent.info_hash,
+      torrent.length,
+      peer_id,
+    )
+    |> map_error(TrackerError),
   )
   use endpoints <- try(
     peer_endpoints
@@ -226,30 +248,49 @@ fn cmd_download(
 }
 
 fn cmd_parse_magnet(magnet_link: String) -> Result(Nil, CmdError) {
-  echo "hloeafafaade"
-  use magnet_info_dict <- try(
-    parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
+  use magnet_info <- try(
+    torrent.parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
   )
-  let tr = dict.get(magnet_info_dict, "tr")
-  case tr {
-    Ok(url) -> {
-      let decoded = uri.percent_decode(url) |> result.unwrap(url)
-      io.println("Tracker URL: " <> decoded)
-    }
-    Error(_) -> io.print_error("Error: 'tr' (Tracker URL) is missing.")
-  }
+  io.println("Tracker URL: " <> magnet_info.announce)
+  io.println(
+    "Info Hash: "
+    <> magnet_info.info_hash
+    |> bit_array.base16_encode
+    |> string.lowercase,
+  )
+  Ok(Nil)
+}
 
-  let xt = dict.get(magnet_info_dict, "xt")
-  case xt {
-    Ok(urn) -> {
-      let hash = case string.split_once(urn, "urn:btih:") {
-        Ok(hash) -> hash.1
-        Error(_) -> urn
-      }
-      io.println("Info Hash: " <> hash)
-    }
-    Error(_) -> io.print_error("Error: 'xt' (Info Hash) is missing.")
-  }
+fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
+  use peer_id <- try(load_peer_id() |> map_error(FileError))
+  use magnet_info <- try(
+    torrent.parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
+  )
+  use peers <- try(
+    tracker.get_peers(magnet_info.announce, magnet_info.info_hash, 10, peer_id)
+    |> map_error(TrackerError),
+  )
+  echo peers
+  use <- bool.guard(list.is_empty(peers), return: {
+    io.println("No peers")
+    Ok(Nil)
+  })
+  let assert [first, ..] = peers
+
+  use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
+
+  use #(_socket, peer_peer_id) <- try(
+    protocol.handshake(endpoint, magnet_info.info_hash, peer_id)
+    |> map_error(ProtocolError),
+  )
+
+  let protocol.PeerId(id) = peer_peer_id
+  io.println(
+    "Peer ID: "
+    <> id
+    |> bit_array.base16_encode
+    |> string.lowercase,
+  )
   Ok(Nil)
 }
 
@@ -263,17 +304,6 @@ fn load_peer_id() -> Result(protocol.PeerId, simplifile.FileError) {
       Ok(protocol.PeerId(peer_id))
     }
   }
-}
-
-pub fn parse_magnet(
-  magnet_link: String,
-) -> Result(dict.Dict(String, String), Nil) {
-  use #(_, query_param) <- try(string.split_once(magnet_link, "?"))
-
-  query_param
-  |> string.split("&")
-  |> list.try_map(string.split_once(_, "="))
-  |> result.map(dict.from_list)
 }
 
 pub type CmdError {
