@@ -271,7 +271,7 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
     |> map_error(TrackerError),
   )
   echo peers
-  use <- bool.guard(list.is_empty(peers), return: {
+  use <- bool.lazy_guard(list.is_empty(peers), return: fn() {
     io.println("No peers")
     Ok(Nil)
   })

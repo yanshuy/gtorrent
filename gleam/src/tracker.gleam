@@ -31,7 +31,6 @@ pub fn get_peers(
 
   use resp <- try(httpc.send_bits(req) |> map_error(HttpError))
   use resp_bencode <- try(bencode.decode(resp.body) |> map_error(DecodeError))
-  echo resp_bencode
 
   use dict <- try(bencode.dict(resp_bencode) |> map_error(DecodeError))
   use peers <- try(bencode.get_value(dict, "peers") |> map_error(DecodeError))
