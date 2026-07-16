@@ -9,6 +9,7 @@ import gleam/json
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
+import gleam/uri
 import simplifile
 import torrent/download
 import torrent/peer/protocol
@@ -231,7 +232,10 @@ fn cmd_parse_magnet(magnet_link: String) -> Result(Nil, CmdError) {
   )
   let tr = dict.get(magnet_info_dict, "tr")
   case tr {
-    Ok(url) -> io.println("Tracker URL: " <> url)
+    Ok(url) -> {
+      let decoded = uri.percent_decode(url) |> result.unwrap(url)
+      io.println("Tracker URL: " <> decoded)
+    }
     Error(_) -> io.print_error("Error: 'tr' (Tracker URL) is missing.")
   }
 

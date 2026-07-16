@@ -21,12 +21,12 @@
 
 -type start_error() :: {start_error, binary()}.
 
--file("src/bittorrent.gleam", 310).
+-file("src/bittorrent.gleam", 314).
 -spec stop(integer()) -> nil.
 stop(Code) ->
     init:stop(Code).
 
--file("src/bittorrent.gleam", 291).
+-file("src/bittorrent.gleam", 295).
 -spec describe_cmd_error(cmd_error()) -> binary().
 describe_cmd_error(Error) ->
     case Error of
@@ -69,7 +69,7 @@ describe_cmd_error(Error) ->
             torrent@download:describe_error(Err@5)
     end.
 
--file("src/bittorrent.gleam", 264).
+-file("src/bittorrent.gleam", 268).
 -spec parse_magnet(binary()) -> {ok, gleam@dict:dict(binary(), binary())} |
     {error, nil}.
 parse_magnet(Magnet_link) ->
@@ -89,10 +89,10 @@ parse_magnet(Magnet_link) ->
         end
     ).
 
--file("src/bittorrent.gleam", 227).
+-file("src/bittorrent.gleam", 228).
 -spec cmd_parse_magnet(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_parse_magnet(Magnet_link) ->
-    echo(<<"hloeafafaade"/utf8>>, nil, 228),
+    echo(<<"hloeafafaade"/utf8>>, nil, 229),
     gleam@result:'try'(
         begin
             _pipe = parse_magnet(Magnet_link),
@@ -102,6 +102,7 @@ cmd_parse_magnet(Magnet_link) ->
             Tr = gleam_stdlib:map_get(Magnet_info_dict, <<"tr"/utf8>>),
             case Tr of
                 {ok, Url} ->
+                    echo(gleam_stdlib:percent_decode(Url), nil, 236),
                     gleam_stdlib:println(<<"Tracker URL: "/utf8, Url/binary>>);
 
                 {error, _} ->
@@ -133,7 +134,7 @@ cmd_parse_magnet(Magnet_link) ->
         end
     ).
 
--file("src/bittorrent.gleam", 138).
+-file("src/bittorrent.gleam", 139).
 -spec new_endpoint(binary()) -> {ok, torrent@peer@protocol:endpoint()} |
     {error, nil}.
 new_endpoint(Endpoint) ->
@@ -148,7 +149,7 @@ new_endpoint(Endpoint) ->
             {error, nil}
     end.
 
--file("src/bittorrent.gleam", 97).
+-file("src/bittorrent.gleam", 98).
 -spec info(binary()) -> {ok, torrent@torrent:torrent_info()} |
     {error, cmd_error()}.
 info(Filename) ->
@@ -178,7 +179,7 @@ info(Filename) ->
         end
     ).
 
--file("src/bittorrent.gleam", 252).
+-file("src/bittorrent.gleam", 256).
 -spec load_peer_id() -> {ok, torrent@peer@protocol:peer_id()} |
     {error, simplifile:file_error()}.
 load_peer_id() ->
@@ -194,7 +195,7 @@ load_peer_id() ->
             )
     end.
 
--file("src/bittorrent.gleam", 204).
+-file("src/bittorrent.gleam", 205).
 -spec cmd_download(binary(), binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_download(Download_path, Torrent_file) ->
     gleam@result:'try'(
@@ -256,7 +257,7 @@ cmd_download(Download_path, Torrent_file) ->
         end
     ).
 
--file("src/bittorrent.gleam", 167).
+-file("src/bittorrent.gleam", 168).
 -spec cmd_download_piece(binary(), binary(), binary()) -> {ok, nil} |
     {error, cmd_error()}.
 cmd_download_piece(Download_path, Torrent_file, Piece_index_str) ->
@@ -367,7 +368,7 @@ cmd_download_piece(Download_path, Torrent_file, Piece_index_str) ->
         end
     ).
 
--file("src/bittorrent.gleam", 148).
+-file("src/bittorrent.gleam", 149).
 -spec cmd_handshake(binary(), binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_handshake(Filename, Endpoint) ->
     gleam@result:'try'(
@@ -426,7 +427,7 @@ cmd_handshake(Filename, Endpoint) ->
         end
     ).
 
--file("src/bittorrent.gleam", 127).
+-file("src/bittorrent.gleam", 128).
 -spec cmd_peers(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_peers(Filename) ->
     gleam@result:'try'(
@@ -461,7 +462,7 @@ cmd_peers(Filename) ->
         end
     ).
 
--file("src/bittorrent.gleam", 104).
+-file("src/bittorrent.gleam", 105).
 -spec cmd_info(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_info(Filename) ->
     gleam@result:'try'(
@@ -498,7 +499,7 @@ cmd_info(Filename) ->
         end
     ).
 
--file("src/bittorrent.gleam", 86).
+-file("src/bittorrent.gleam", 87).
 -spec cmd_decode(binary()) -> {ok, nil} | {error, cmd_error()}.
 cmd_decode(Encode_str) ->
     gleam@result:'try'(
@@ -520,7 +521,7 @@ cmd_decode(Encode_str) ->
         end
     ).
 
--file("src/bittorrent.gleam", 34).
+-file("src/bittorrent.gleam", 35).
 -spec execute_cmd(list(binary())) -> {ok, nil} | {error, cmd_error()}.
 execute_cmd(Args) ->
     case Args of
@@ -598,7 +599,7 @@ execute_cmd(Args) ->
             {error, {unknown_command, Command}}
     end.
 
--file("src/bittorrent.gleam", 327).
+-file("src/bittorrent.gleam", 331).
 -spec start(list(application())) -> nil.
 start(Apps) ->
     gleam@list:each(Apps, fun(App) -> case bittorrent_ffi:start(App) of
@@ -610,7 +611,7 @@ start(Apps) ->
                     nil
             end end).
 
--file("src/bittorrent.gleam", 23).
+-file("src/bittorrent.gleam", 24).
 -spec execute(list(binary())) -> nil.
 execute(Args) ->
     start([inets, crypto, asn1, public_key, ssl]),
@@ -623,7 +624,7 @@ execute(Args) ->
             init:stop(1)
     end.
 
--file("src/bittorrent.gleam", 19).
+-file("src/bittorrent.gleam", 20).
 -spec main() -> nil.
 main() ->
     execute(erlang:element(4, argv:load())).
