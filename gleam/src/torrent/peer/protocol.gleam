@@ -1,3 +1,4 @@
+import bencode
 import gleam/int
 import gleam/result.{map_error, try}
 import mug.{ConnectionOptions}
@@ -11,6 +12,7 @@ pub type PeerMessage {
   BitField(BitArray)
   Request(piece_index: Int, begin: Int, length: Int)
   Piece(piece_index: Int, begin: Int, block: BitArray)
+  Extension
 }
 
 pub type PeerId {
@@ -41,15 +43,22 @@ pub fn connect(endpoint: Endpoint) -> Result(mug.Socket, ProtocolError) {
 pub fn handshake(endpoint: Endpoint, info_hash: BitArray, peer_id: PeerId) {
   use socket <- try(connect(endpoint))
   let PeerId(id) = peer_id
-  use peer_peer_id <- try(peer_handshake(socket, info_hash, id))
-  #(socket, peer_peer_id) |> Ok
+  use #(peer_peer_id, reserved) <- try(peer_handshake(socket, info_hash, id))
+
+  case reserved {
+    <<_:size(64 - 20), 1:size(1), _:bits>> -> {
+      #(socket, peer_peer_id, True)
+    }
+    _ -> #(socket, peer_peer_id, False)
+  }
+  |> Ok
 }
 
 fn peer_handshake(
   socket: mug.Socket,
   info_hash: BitArray,
   peer_id: BitArray,
-) -> Result(PeerId, ProtocolError) {
+) -> Result(#(PeerId, BitArray), ProtocolError) {
   let handshake_msg = <<
     19:int, "BitTorrent protocol", 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
     0x00, info_hash:bits, peer_id:bits,
@@ -64,17 +73,38 @@ fn peer_handshake(
     <<
       19:int,
       "BitTorrent protocol",
-      _:size(8)-unit(8),
+      reserved:size(8)-unit(8)-bits,
       rev_info_hash:bytes-size(20)-unit(8),
       peer_id:bytes-size(20)-unit(8),
     >> -> {
       case rev_info_hash == info_hash {
-        True -> Ok(PeerId(peer_id))
+        True -> Ok(#(PeerId(peer_id), reserved))
         False -> Error(InfoHashMismatch)
       }
     }
     _ -> Error(InvalidResponse)
   }
+}
+
+pub fn extension_handshake(socket: mug.Socket) -> Result(Nil, ProtocolError) {
+  let id = message_id(Extension)
+  let extension_message_id = 0
+
+  let payload_dict =
+    bencode.encode(
+      bencode.BDict([
+        #("m", bencode.BDict([#("ut_metadata", bencode.BInteger(10))])),
+      ]),
+    )
+
+  let extension_message = <<
+    13:big-size(4)-unit(8),
+    id:int,
+    extension_message_id:size(1)-unit(8),
+    payload_dict:bits,
+  >>
+
+  send_message(socket, extension_message)
 }
 
 pub fn log(m: PeerMessage) {
@@ -151,6 +181,7 @@ pub fn message_id(message: PeerMessage) -> Int {
     BitField(_) -> 5
     Request(_, _, _) -> 6
     Piece(_, _, _) -> 7
+    Extension -> 20
   }
 }
 

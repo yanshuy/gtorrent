@@ -87,24 +87,10 @@ fn handle_download(
   case process.receive(mailbox, within: 10_000) {
     Ok(event) -> {
       case event {
-        Ready(peer_id, bitfield, reply) -> {
+        Ready(peer_id, bitfield) -> {
           let peers = dict.insert(state.peers, peer_id, bitfield)
           let state = TorrentState(..state, peers: peers)
-          let res = lease_piece(state, bitfield)
-          //can go endgame here
-          case res {
-            Ok(#(piece, new_pending)) -> {
-              process.send(reply, piece)
-              let new_state =
-                TorrentState(
-                  ..state,
-                  leased_pieces: [piece, ..state.leased_pieces],
-                  pending_pieces: new_pending,
-                )
-              handle_download(writer, new_state, mailbox)
-            }
-            Error(_) -> handle_download(writer, state, mailbox)
-          }
+          handle_download(writer, state, mailbox)
         }
         LeasePiece(peer_id, reply) -> {
           let assert Ok(bitfield) = dict.get(state.peers, peer_id)
@@ -164,34 +150,22 @@ pub fn connect_with_peers(
   info_hash: BitArray,
   peer_id: protocol.PeerId,
 ) {
-  endpoints
-  |> list.take(6)
-  |> list.each(fn(endpoint) {
+  let spawn_worker = fn(endpoint: protocol.Endpoint) {
     process.spawn(fn() {
-      case peer_worker(main_subject, endpoint, info_hash, peer_id) {
+      let session =
+        session.start_session(main_subject, endpoint, info_hash, peer_id)
+        |> result.map_error(PeerError)
+
+      case session {
         Ok(_) -> Nil
         Error(err) ->
           io.println(endpoint.ip4 <> "is malicious" <> describe_error(err))
       }
     })
-  })
-}
-
-fn peer_worker(
-  parent_subject: process.Subject(messages.PeerEvent),
-  endpoint: protocol.Endpoint,
-  info_hash: BitArray,
-  peer_id: protocol.PeerId,
-) -> Result(Nil, TorrentError) {
-  use #(socket, peer_peer_id) <- try(
-    protocol.handshake(endpoint, info_hash, peer_id)
-    |> result.map_error(ProtocolError),
-  )
-  use _ <- try(
-    session.start_session(parent_subject, socket, peer_peer_id)
-    |> result.map_error(PeerError),
-  )
-  Ok(Nil)
+  }
+  endpoints
+  |> list.take(6)
+  |> list.each(spawn_worker)
 }
 
 fn lease_piece(
@@ -230,7 +204,7 @@ pub fn download_piece(
   peer_id: protocol.PeerId,
   piece: torrent.PieceInfo,
 ) -> Result(Nil, TorrentError) {
-  use #(socket, peer_peer_id) <- try(
+  use #(socket, peer_peer_id, _extension) <- try(
     protocol.handshake(endpoint, torrent.info_hash, peer_id)
     |> result.map_error(ProtocolError),
   )

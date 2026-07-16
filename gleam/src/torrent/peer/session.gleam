@@ -30,12 +30,20 @@ pub fn new_piece_download(piece: torrent.PieceInfo) {
   )
 }
 
+pub type State {
+  Bitfield
+  ExtHandshake
+  Idle
+  Download(PieceDownload)
+}
+
 pub type PeerSession {
   PeerSession(
     socket: mug.Socket,
     peer_id: protocol.PeerId,
+    extension: Bool,
+    state: State,
     bitfield: BitArray,
-    piece: Option(PieceDownload),
     choked: Bool,
     interested: Bool,
   )
@@ -44,58 +52,100 @@ pub type PeerSession {
 pub fn new_session(
   socket: mug.Socket,
   peer_id: protocol.PeerId,
+  extension: Bool,
 ) -> PeerSession {
   PeerSession(
     socket,
     peer_id,
+    extension: extension,
+    state: Bitfield,
     bitfield: <<>>,
-    piece: None,
     choked: True,
     interested: False,
   )
 }
 
+fn run(
+  parent_subject: Subject(messages.PeerEvent),
+  session: PeerSession,
+  need_meta: Bool,
+) {
+  case session.state {
+    Bitfield -> {
+      use session <- try(receive_bitfield(session))
+      process.send(
+        parent_subject,
+        messages.Ready(session.peer_id, session.bitfield),
+      )
+      case need_meta {
+        True -> {
+          let session = PeerSession(..session, state: ExtHandshake)
+          run(parent_subject, session, need_meta)
+        }
+        False ->
+          run(parent_subject, PeerSession(..session, state: Idle), need_meta)
+      }
+    }
+
+    ExtHandshake -> {
+      use _ <- try(
+        protocol.extension_handshake(session.socket) |> map_error(ProtocolError),
+      )
+      run(parent_subject, PeerSession(..session, state: Idle), need_meta)
+    }
+
+    Idle -> {
+      let piece_dwnld = wait_for_lease(parent_subject, session)
+      let session = PeerSession(..session, state: Download(piece_dwnld))
+      run(parent_subject, session, need_meta)
+    }
+
+    Download(piece) -> {
+      let session = handle_piece_download(parent_subject, session, piece)
+      run(parent_subject, PeerSession(..session, state: Idle), need_meta)
+    }
+  }
+}
+
+fn wait_for_lease(
+  parent_subject: Subject(messages.PeerEvent),
+  session: PeerSession,
+) -> PieceDownload {
+  let piece =
+    process.call_forever(parent_subject, fn(subject) {
+      messages.LeasePiece(session.peer_id, subject)
+    })
+  new_piece_download(piece)
+}
+
 pub fn start_session(
   parent_subject: Subject(messages.PeerEvent),
-  socket: mug.Socket,
+  endpoint: protocol.Endpoint,
+  info_hash: BitArray,
   peer_id: protocol.PeerId,
 ) {
-  let session = new_session(socket, peer_id)
-  use session <- try(receive_bitfield(session))
-
-  let piece =
-    process.call(parent_subject, 1000, fn(subject) {
-      messages.Ready(
-        peer: session.peer_id,
-        bitfield: session.bitfield,
-        reply_subject: subject,
-      )
-    })
-  let piece_dwnld = new_piece_download(piece)
-  let new_session = PeerSession(..session, piece: Some(piece_dwnld))
-  handle_piece_download(parent_subject, new_session)
+  use #(socket, peer_peer_id, extension) <- try(
+    protocol.handshake(endpoint, info_hash, peer_id)
+    |> result.map_error(ProtocolError),
+  )
+  let session = new_session(socket, peer_peer_id, extension)
+  let _ = run(parent_subject, session, False)
   Ok(Nil)
 }
 
 fn handle_piece_download(
   parent_subject: Subject(messages.PeerEvent),
   session: PeerSession,
-) {
-  let assert Some(piece) = session.piece
-  let result = handle_piece(session)
+  piece_download: PieceDownload,
+) -> PeerSession {
+  let result = request_piece(session, piece_download)
   case result {
-    Ok(PieceResult(session: session, piece: data)) -> {
+    Ok(#(session, piece)) -> {
       process.send(
         parent_subject,
-        messages.PieceCompleted(index: piece.info.index, data: data),
+        messages.PieceCompleted(index: piece_download.info.index, piece: piece),
       )
-      let next_piece =
-        process.call_forever(parent_subject, fn(subject) {
-          messages.LeasePiece(session.peer_id, subject)
-        })
-      let piece_dwnld = new_piece_download(next_piece)
-      let new_session = PeerSession(..session, piece: Some(piece_dwnld))
-      handle_piece_download(parent_subject, new_session)
+      session
     }
     Error(err) -> {
       process.send(
@@ -103,6 +153,7 @@ fn handle_piece_download(
         messages.PeerDisconnected(session.peer_id, reason: describe_error(err)),
       )
       process.kill(process.self())
+      session
     }
   }
 }
@@ -123,44 +174,46 @@ pub type BlockRequest {
   BlockRequest(begin: Int, length: Int)
 }
 
-pub type PieceResult {
-  PieceResult(session: PeerSession, piece: BitArray)
-}
-
-fn handle_piece(session: PeerSession) -> Result(PieceResult, PeerError) {
+fn request_piece(
+  session: PeerSession,
+  piece: PieceDownload,
+) -> Result(#(PeerSession, BitArray), PeerError) {
   case session {
-    PeerSession(piece: None, ..) -> panic as "piece not set before start"
     PeerSession(choked: False, interested: True, ..) -> {
-      use session <- try(request_piece_blocks(session))
-      peer_listen(session)
+      use new_piece <- try(request_piece_blocks(session, piece))
+      peer_listen(session, new_piece)
     }
-    PeerSession(choked: _, interested: False, ..) -> peer_listen(session)
-    PeerSession(choked: True, interested: True, ..) -> peer_listen(session)
+    PeerSession(choked: _, interested: False, ..) -> peer_listen(session, piece)
+    PeerSession(choked: True, interested: True, ..) ->
+      peer_listen(session, piece)
   }
 }
 
-fn peer_listen(session: PeerSession) -> Result(PieceResult, PeerError) {
+fn peer_listen(
+  session: PeerSession,
+  piece: PieceDownload,
+) -> Result(#(PeerSession, BitArray), PeerError) {
   use message <- try(
     protocol.receive_message(session.socket) |> map_error(ProtocolError),
   )
   case message {
-    Choke -> handle_piece(PeerSession(..session, choked: True))
-    Unchoke -> handle_piece(PeerSession(..session, choked: False))
-    Have -> handle_piece(session)
+    Choke -> request_piece(PeerSession(..session, choked: True), piece)
+    Unchoke -> request_piece(PeerSession(..session, choked: False), piece)
+    Have -> request_piece(session, piece)
 
     BitField(_) -> Error(DuplicateBitfield)
 
     Piece(_, _, _) -> {
-      use piece <- try(handle_piece_block(session, message))
+      use piece <- try(handle_piece_block(message, piece))
       case
         list.is_empty(piece.pending_requests)
         && dict.is_empty(piece.outstanding_requests)
       {
         True -> {
           use piece <- try(handle_piece_complete(piece))
-          PieceResult(session: session, piece: piece) |> Ok
+          #(session, piece) |> Ok
         }
-        False -> handle_piece(PeerSession(..session, piece: Some(piece)))
+        False -> request_piece(session, piece)
       }
     }
     message -> Error(UnexpectedMessage(protocol.message_id(message)))
@@ -195,14 +248,14 @@ fn handle_bitfield(
       )
       Ok(PeerSession(..session, interested: True))
     }
-    False -> Error(PeerError("they have nothing"))
+    False -> Error(PeerError("peer has nothing"))
   }
 }
 
 fn request_piece_blocks(
   session: PeerSession,
-) -> Result(PeerSession, PeerError) {
-  let assert Some(piece) = session.piece
+  piece: PieceDownload,
+) -> Result(PieceDownload, PeerError) {
   let take = int.min(4, 4 - dict.size(piece.outstanding_requests))
   let remaining = list.drop(piece.pending_requests, take)
 
@@ -227,20 +280,19 @@ fn request_piece_blocks(
     list.fold(reqs, piece.outstanding_requests, fn(outstanding, req) {
       dict.insert(outstanding, req.begin, req)
     })
-  let new_piece =
-    PieceDownload(
-      ..piece,
-      pending_requests: remaining,
-      outstanding_requests: outstanding,
-    )
-  Ok(PeerSession(..session, piece: Some(new_piece)))
+
+  PieceDownload(
+    ..piece,
+    pending_requests: remaining,
+    outstanding_requests: outstanding,
+  )
+  |> Ok
 }
 
 fn handle_piece_block(
-  session: PeerSession,
   message: protocol.PeerMessage,
+  piece: PieceDownload,
 ) -> Result(PieceDownload, PeerError) {
-  let assert Some(piece) = session.piece
   let assert Piece(peer_piece_index, begin, block) = message
   use <- bool.guard(
     peer_piece_index != piece.info.index,
@@ -321,12 +373,11 @@ pub fn download_piece(
   peer_id: protocol.PeerId,
   piece: torrent.PieceInfo,
 ) -> Result(BitArray, PeerError) {
-  let session = new_session(socket, peer_id)
+  let session = new_session(socket, peer_id, False)
   use session <- try(receive_bitfield(session))
   let piece = new_piece_download(piece)
-  let session = PeerSession(..session, piece: Some(piece))
-  use result <- try(handle_piece(session))
-  result.piece |> Ok
+  use result <- try(request_piece(session, piece))
+  result.1 |> Ok
 }
 
 pub type PeerError {
@@ -341,21 +392,12 @@ pub type PeerError {
 pub fn describe_error(error: PeerError) -> String {
   case error {
     PeerError(reason) -> "Peer connection error: " <> reason
-
-    UnexpectedMessage(id) ->
-      "Received an unexpected protocol message ID: " <> int.to_string(id)
-
-    ProtocolError(protocol_err) ->
-      "BitTorrent protocol validation failed: "
-      <> protocol.describe_error(protocol_err)
-
+    UnexpectedMessage(id) -> "Unexpected message ID: " <> int.to_string(id)
+    ProtocolError(protocol_err) -> protocol.describe_error(protocol_err)
     PieceHashMismatch ->
-      "Data integrity check failed: downloaded piece hash does not match the torrent file info-hash"
-
-    InvalidBlock ->
-      "Received an invalid data block length, offset, or payload structural format"
-
+      "downloaded piece hash does not match the torrent file info-hash"
+    InvalidBlock -> "Received an invalid data block length, offset, or payload"
     DuplicateBitfield ->
-      "Protocol violation: peer attempted to send a duplicate bitfield message after connection setup"
+      "Protocol violation: peer sent a second bitfield message"
   }
 }

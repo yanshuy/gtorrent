@@ -162,7 +162,7 @@ fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
   use torrent <- try(info(filename))
 
   use endpoint <- try(new_endpoint(endpoint) |> replace_error(InvalidEndpoint))
-  use #(_socket, peer_peer_id) <- try(
+  use #(_socket, peer_peer_id, _) <- try(
     protocol.handshake(endpoint, torrent.info_hash, peer_id)
     |> map_error(ProtocolError),
   )
@@ -270,7 +270,7 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
     tracker.get_peers(magnet_info.announce, magnet_info.info_hash, 10, peer_id)
     |> map_error(TrackerError),
   )
-  echo peers
+
   use <- bool.lazy_guard(list.is_empty(peers), return: fn() {
     io.println("No peers")
     Ok(Nil)
@@ -279,7 +279,7 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
 
   use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
 
-  use #(_socket, peer_peer_id) <- try(
+  use #(_socket, peer_peer_id, _) <- try(
     protocol.handshake(endpoint, magnet_info.info_hash, peer_id)
     |> map_error(ProtocolError),
   )
