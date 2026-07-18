@@ -1,51 +1,41 @@
 import file_io
 import gleam/bit_array
 import gleam/bool
+import gleam/crypto
 import gleam/dict
 import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
 import simplifile
-import torrent/messages.{LeasePiece, PeerDisconnected, PieceCompleted, Ready}
+import torrent/messages.{
+  LeasePiece, PeerDisconnected, PieceCompleted, Ready, ReturnPieceLease,
+}
 import torrent/peer/protocol
 import torrent/peer/session
 import torrent/torrent
 
-pub type Torrent {
-  Connet(
-    endpoints: List(protocol.Endpoint),
-    torrent: Option(torrent.TorrentInfo),
-  )
-  Metainfo(peers: dict.Dict(protocol.PeerId, BitArray))
-  Download(
-    peers: dict.Dict(protocol.PeerId, BitArray),
-    info: torrent.TorrentInfo,
-    pending_pieces: List(torrent.PieceInfo),
-    leased_pieces: List(torrent.PieceInfo),
-  )
-}
-
-pub fn download_torrent_1(
-  download_path: String,
-  endpoints: List(protocol.Endpoint),
-  info_hash: BitArray,
-  torrent: Option(torrent.TorrentInfo),
-  peer_id: protocol.PeerId,
-) {
-  // connect_with_peers(main_subject, endpoints, info_hash, peer_id)
-
-  todo
-}
+// pub type Torrent {
+//   Connet(
+//     endpoints: List(protocol.Endpoint),
+//     torrent: Option(torrent.TorrentInfo),
+//   )
+//   Metainfo(peers: dict.Dict(protocol.PeerId, BitArray))
+//   Download(
+//     peers: dict.Dict(protocol.PeerId, BitArray),
+//     info: torrent.TorrentInfo,
+//     pending_pieces: List(torrent.PieceInfo),
+//     leased_pieces: List(torrent.PieceInfo),
+//   )
+// }
 
 pub type TorrentState {
   TorrentState(
     info: torrent.TorrentInfo,
     pending_pieces: List(torrent.PieceInfo),
     leased_pieces: List(torrent.PieceInfo),
-    peers: dict.Dict(protocol.PeerId, BitArray),
+    peers: dict.Dict(protocol.PeerId, process.Subject(torrent.PieceInfo)),
   )
 }
 
@@ -87,45 +77,89 @@ fn handle_download(
   case process.receive(mailbox, within: 10_000) {
     Ok(event) -> {
       case event {
-        Ready(peer_id, bitfield) -> {
-          let peers = dict.insert(state.peers, peer_id, bitfield)
+        Ready(peer_id, subject) -> {
+          let peers = dict.insert(state.peers, peer_id, subject)
           let state = TorrentState(..state, peers: peers)
           handle_download(writer, state, mailbox)
         }
-        LeasePiece(peer_id, reply) -> {
-          let assert Ok(bitfield) = dict.get(state.peers, peer_id)
-          let res = lease_piece(state, bitfield)
-          case res {
-            Ok(#(piece, new_pendings)) -> {
-              process.send(reply, piece)
-              let new_state =
-                TorrentState(
-                  ..state,
-                  leased_pieces: [piece, ..state.leased_pieces],
-                  pending_pieces: new_pendings,
-                )
-              handle_download(writer, new_state, mailbox)
+
+        LeasePiece(peer_id, bitfield) -> {
+          let assert Ok(subject) = dict.get(state.peers, peer_id)
+
+          case lease_piece(state, bitfield) {
+            Ok(piece) -> {
+              process.send(subject, piece)
+
+              let pendings =
+                state.pending_pieces
+                |> list.filter(fn(pending) { pending.index != piece.index })
+              let state = TorrentState(..state, pending_pieces: pendings)
+
+              let leased = [piece, ..state.leased_pieces]
+              let state = TorrentState(..state, leased_pieces: leased)
+
+              handle_download(writer, state, mailbox)
             }
             Error(_) -> handle_download(writer, state, mailbox)
           }
         }
-        PieceCompleted(index, data) -> {
+
+        PieceCompleted(_peer_id, index, data) -> {
           io.println("[COMPLETE EVENT] index=" <> int.to_string(index))
-          process.spawn(fn() {
-            let offset = index * state.info.piece_length
-            let res = writer.write(writer, offset, data)
-            case res {
-              Ok(_) -> Nil
-              Error(_) -> panic as "write failed"
-            }
-          })
+
+          let assert Ok(leased) =
+            state.leased_pieces |> list.find(fn(piece) { piece.index == index })
+            as "got a piece that was never leased"
+
           let new_leased =
             state.leased_pieces
             |> list.filter(fn(piece) { piece.index != index })
-          echo list.map(new_leased, fn(p) { p.index })
-          let new_state = TorrentState(..state, leased_pieces: new_leased)
+
+          case verify_piece(data, leased.hash) {
+            True -> {
+              process.spawn(fn() {
+                let offset = index * state.info.piece_length
+                let res = writer.write(writer, offset, data)
+                case res {
+                  Ok(_) -> Nil
+                  Error(_) -> panic as "write failed"
+                }
+              })
+
+              let new_state = TorrentState(..state, leased_pieces: new_leased)
+              handle_download(writer, new_state, mailbox)
+            }
+            False -> {
+              let new_state =
+                TorrentState(
+                  ..state,
+                  leased_pieces: new_leased,
+                  pending_pieces: [leased, ..state.pending_pieces],
+                )
+              handle_download(writer, new_state, mailbox)
+            }
+          }
+        }
+
+        ReturnPieceLease(_peer_id, piece_index) -> {
+          let assert Ok(leased) =
+            state.leased_pieces
+            |> list.find(fn(piece) { piece.index == piece_index })
+            as "returned a piece that was never leased"
+
+          let new_leased =
+            state.leased_pieces
+            |> list.filter(fn(piece) { piece.index != piece_index })
+
+          let new_state =
+            TorrentState(
+              ..state,
+              pending_pieces: [leased, ..state.pending_pieces],
+              leased_pieces: new_leased,
+            )
           handle_download(writer, new_state, mailbox)
         }
+
         PeerDisconnected(peer_id, reason) -> {
           let id = {
             let protocol.PeerId(id) = peer_id
@@ -171,15 +205,9 @@ pub fn connect_with_peers(
 fn lease_piece(
   state: TorrentState,
   bitfield: BitArray,
-) -> Result(#(torrent.PieceInfo, List(torrent.PieceInfo)), Nil) {
-  use piece <- try(
-    state.pending_pieces
-    |> list.find(fn(piece) { is_bit_set(bitfield, piece.index) }),
-  )
-  let pendings =
-    state.pending_pieces
-    |> list.filter(fn(pending) { pending.index != piece.index })
-  #(piece, pendings) |> Ok
+) -> Result(torrent.PieceInfo, Nil) {
+  state.pending_pieces
+  |> list.find(fn(piece) { is_bit_set(bitfield, piece.index) })
 }
 
 // fn print_bits(bits: BitArray, log: List(Int)) {
@@ -213,10 +241,20 @@ pub fn download_piece(
     |> result.map_error(PeerError),
   )
 
-  let writer = file_io.new_file_writer(download_path, piece.length)
+  case verify_piece(data, piece.hash) {
+    True -> {
+      let writer = file_io.new_file_writer(download_path, piece.length)
 
-  writer.write(writer, 0, data)
-  |> result.replace_error(FileError(simplifile.Efault))
+      writer.write(writer, 0, data)
+      |> result.replace_error(FileError(simplifile.Efault))
+    }
+    False -> Error(TorrentError("piece hash mismatch"))
+  }
+}
+
+fn verify_piece(binary: BitArray, hash: BitArray) {
+  let calc = crypto.hash(crypto.Sha1, binary)
+  calc == hash
 }
 
 pub type TorrentError {
@@ -224,6 +262,7 @@ pub type TorrentError {
   ProtocolError(protocol.ProtocolError)
   PeerError(session.PeerError)
   FileError(simplifile.FileError)
+  TorrentError(String)
 }
 
 pub fn describe_error(error: TorrentError) -> String {
@@ -235,5 +274,6 @@ pub fn describe_error(error: TorrentError) -> String {
     PeerError(err) -> session.describe_error(err)
     FileError(file_err) ->
       "Disk I/O error: " <> simplifile.describe_error(file_err)
+    TorrentError(reason) -> reason
   }
 }

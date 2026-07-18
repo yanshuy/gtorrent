@@ -1,0 +1,1 @@
+-record(download, {piece :: torrent@peer@session:piece_download()}).

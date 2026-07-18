@@ -3,6 +3,7 @@ import gleam/bit_array
 import gleam/crypto
 import gleam/dict
 import gleam/list
+import gleam/pair
 import gleam/result.{replace_error, try}
 import gleam/string
 import gleam/uri
@@ -21,7 +22,10 @@ pub type TorrentInfo {
 pub fn parse(
   meta_info: bencode.Bencode,
 ) -> Result(TorrentInfo, bencode.BencodeError) {
-  use dict <- try(bencode.dict(meta_info))
+  use dict <- try(
+    bencode.dict(meta_info)
+    |> replace_error(bencode.InvalidTorrent("expected meta info to be a dict")),
+  )
 
   let name = bencode.get_string(dict, "name") |> result.unwrap("Unknown")
   use announce <- try(bencode.get_string(dict, "announce"))
@@ -74,7 +78,8 @@ pub fn parse_magnet(magnet_link: String) -> Result(MagnetInfo, String) {
   )
   use info_hash <- try(
     string.split_once(xt, "urn:btih:")
-    |> result.try(fn(tuple) { tuple.1 |> bit_array.base16_decode })
+    |> result.map(pair.second)
+    |> result.try(bit_array.base16_decode)
     |> replace_error("invalid 'xt' (Info Hash)"),
   )
 
@@ -130,12 +135,12 @@ fn new_pieces_loop(
   case hashes {
     [] -> acc
 
-    [last_hash] -> {
+    [hash] -> {
       let length = case file_length % piece_length {
         0 -> piece_length
         rem -> rem
       }
-      let piece = PieceInfo(index: index, hash: last_hash, length: length)
+      let piece = PieceInfo(index: index, hash: hash, length: length)
       list.reverse([piece, ..acc])
     }
 

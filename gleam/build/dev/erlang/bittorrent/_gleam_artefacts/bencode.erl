@@ -1,8 +1,8 @@
 -module(bencode).
 -compile([no_auto_import, nowarn_unused_vars, nowarn_unused_function, nowarn_nomatch, inline]).
 -define(FILEPATH, "src/bencode.gleam").
--export([decode/1, encode/1, to_json/1, dict/1, get_value/2, get_string/2, get_string_bits/2, get_int/2, get_entries/2, describe_error/1]).
--export_type([bencode/0, bencode_error/0]).
+-export([decode/1, encode/1, to_bencode/1, to_json/1, dict/1, get_value/2, get_string/2, get_string_bits/2, get_int/2, get_entries/2, describe_error/1]).
+-export_type([bencode/0, bencode_error/0, value/0]).
 
 -type bencode() :: {b_dict, list({binary(), bencode()})} |
     {b_list, list(bencode())} |
@@ -17,6 +17,11 @@
     {missing_key, binary()} |
     {invalid_torrent, binary()} |
     no_colon.
+
+-type value() :: {int, integer()} |
+    {string, binary()} |
+    {list, list(value())} |
+    {dict, list({binary(), value()})}.
 
 -file("src/bencode.gleam", 47).
 -spec decode_string(bitstring()) -> {ok, {bencode(), bitstring()}} |
@@ -236,7 +241,7 @@ decode(Encoded_value) ->
         end
     ).
 
--file("src/bencode.gleam", 162).
+-file("src/bencode.gleam", 179).
 -spec encode_entries(list({binary(), bencode()}), list(bitstring())) -> bitstring().
 encode_entries(Entries, Acc) ->
     case Entries of
@@ -250,7 +255,7 @@ encode_entries(Entries, Acc) ->
             encode_entries(Rest, [<<Key@1/bitstring, Value@1/bitstring>> | Acc])
     end.
 
--file("src/bencode.gleam", 149).
+-file("src/bencode.gleam", 166).
 -spec encode_list(list(bencode()), list(bitstring())) -> bitstring().
 encode_list(Values, Acc) ->
     case Values of
@@ -286,7 +291,38 @@ encode(Value) ->
             <<"d"/utf8, Entries@1/bitstring, "e"/utf8>>
     end.
 
--file("src/bencode.gleam", 179).
+-file("src/bencode.gleam", 156).
+-spec to_bencode(value()) -> bencode().
+to_bencode(Value) ->
+    case Value of
+        {int, Int} ->
+            {b_integer, Int};
+
+        {string, String} ->
+            {b_string, gleam_stdlib:identity(String)};
+
+        {list, List} ->
+            {b_list,
+                begin
+                    _pipe = List,
+                    gleam@list:map(_pipe, fun(Item) -> to_bencode(Item) end)
+                end};
+
+        {dict, Dict} ->
+            {b_dict,
+                begin
+                    _pipe@1 = Dict,
+                    gleam@list:map(
+                        _pipe@1,
+                        fun(Item@1) ->
+                            {erlang:element(1, Item@1),
+                                to_bencode(erlang:element(2, Item@1))}
+                        end
+                    )
+                end}
+    end.
+
+-file("src/bencode.gleam", 196).
 -spec to_json(bencode()) -> gleam@json:json().
 to_json(Value) ->
     case Value of
@@ -313,12 +349,12 @@ to_json(Value) ->
                                 file => <<?FILEPATH/utf8>>,
                                 module => <<"bencode"/utf8>>,
                                 function => <<"to_json"/utf8>>,
-                                line => 185,
+                                line => 202,
                                 value => _assert_fail,
-                                start => 4328,
-                                'end' => 4377,
-                                pattern_start => 4339,
-                                pattern_end => 4349})
+                                start => 4739,
+                                'end' => 4788,
+                                pattern_start => 4750,
+                                pattern_end => 4760})
             end,
             gleam@json:string(String@1);
 
@@ -326,20 +362,20 @@ to_json(Value) ->
             gleam@json:int(Integer)
     end.
 
--file("src/bencode.gleam", 192).
+-file("src/bencode.gleam", 209).
 -spec dict(bencode()) -> {ok, gleam@dict:dict(binary(), bencode())} |
-    {error, bencode_error()}.
-dict(Meta_info) ->
-    case Meta_info of
+    {error, nil}.
+dict(Bencode) ->
+    case Bencode of
         {b_dict, Entries} ->
             Dict = maps:from_list(Entries),
             {ok, Dict};
 
         _ ->
-            {error, {invalid_torrent, <<"Not valid"/utf8>>}}
+            {error, nil}
     end.
 
--file("src/bencode.gleam", 204).
+-file("src/bencode.gleam", 219).
 -spec get_value(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
         bencode()} |
     {error, bencode_error()}.
@@ -347,7 +383,7 @@ get_value(Torrent, Key) ->
     _pipe = gleam_stdlib:map_get(Torrent, Key),
     gleam@result:replace_error(_pipe, {missing_key, Key}).
 
--file("src/bencode.gleam", 212).
+-file("src/bencode.gleam", 227).
 -spec get_string(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
         binary()} |
     {error, bencode_error()}.
@@ -368,7 +404,7 @@ get_string(Torrent, Key) ->
         end
     ).
 
--file("src/bencode.gleam", 227).
+-file("src/bencode.gleam", 242).
 -spec get_string_bits(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
         bitstring()} |
     {error, bencode_error()}.
@@ -388,7 +424,7 @@ get_string_bits(Torrent, Key) ->
         end
     ).
 
--file("src/bencode.gleam", 240).
+-file("src/bencode.gleam", 255).
 -spec get_int(gleam@dict:dict(binary(), bencode()), binary()) -> {ok, integer()} |
     {error, bencode_error()}.
 get_int(Torrent, Key) ->
@@ -402,7 +438,7 @@ get_int(Torrent, Key) ->
                             <<"Expected integer for key: "/utf8, Key/binary>>}}
             end end).
 
--file("src/bencode.gleam", 252).
+-file("src/bencode.gleam", 267).
 -spec get_entries(gleam@dict:dict(binary(), bencode()), binary()) -> {ok,
         list({binary(), bencode()})} |
     {error, bencode_error()}.
@@ -417,7 +453,7 @@ get_entries(Torrent, Key) ->
                             <<"Expected dictionary for key: "/utf8, Key/binary>>}}
             end end).
 
--file("src/bencode.gleam", 264).
+-file("src/bencode.gleam", 279).
 -spec describe_error(bencode_error()) -> binary().
 describe_error(Error) ->
     case Error of
@@ -443,5 +479,5 @@ describe_error(Error) ->
             <<"Missing Key: "/utf8, Key/binary>>;
 
         {invalid_torrent, Err} ->
-            Err
+            <<"Invalid: "/utf8, Err/binary>>
     end.

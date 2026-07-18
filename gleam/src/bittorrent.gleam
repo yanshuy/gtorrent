@@ -241,8 +241,10 @@ fn cmd_download(
     }),
   )
 
-  download.download_torrent(download_path, endpoints, torrent, peer_id)
-  |> map_error(TorrentError)
+  use _ <- try(
+    download.download_torrent(download_path, endpoints, torrent, peer_id)
+    |> map_error(TorrentError),
+  )
   io.println("download complete")
   Ok(Nil)
 }
@@ -279,20 +281,46 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
 
   use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
 
-  use #(socket, peer_peer_id, _) <- try(
+  use #(socket, peer_peer_id, _extension) <- try(
     protocol.handshake(endpoint, magnet_info.info_hash, peer_id)
     |> map_error(ProtocolError),
   )
+  let session = session.new_session(socket, peer_peer_id)
+  use session <- try(session.receive_bitfield(session) |> map_error(PeerError))
   use _ <- try(
-    protocol.extension_handshake(socket)
+    protocol.send_extended_handshake(session.socket)
     |> map_error(ProtocolError),
   )
+
+  use extension <- try(
+    session.receive_until(session.socket, fn(message) {
+      echo message
+      case message {
+        protocol.Extension(protocol.Handshake(extensions)) -> {
+          Ok(extensions)
+        }
+        _ -> Error(Nil)
+      }
+    })
+    |> map_error(PeerError),
+  )
+  // use session <- try(session.wait_unchoke(session) |> map_error(PeerError))
+
+  use metadata_extension_id <- try(
+    extension
+    |> list.key_find("ut_metadata")
+    |> replace_error(CmdError("ut_metadata not found in extensions")),
+  )
+
   let protocol.PeerId(id) = peer_peer_id
   io.println(
     "Peer ID: "
     <> id
     |> bit_array.base16_encode
     |> string.lowercase,
+  )
+  io.println(
+    "Peer Metadata Extension ID: " <> metadata_extension_id |> int.to_string,
   )
   Ok(Nil)
 }
@@ -323,6 +351,7 @@ pub type CmdError {
   ProtocolError(protocol.ProtocolError)
   PeerError(session.PeerError)
   TorrentError(download.TorrentError)
+  CmdError(String)
 }
 
 fn describe_cmd_error(error: CmdError) {
@@ -340,6 +369,7 @@ fn describe_cmd_error(error: CmdError) {
     PeerError(err) -> session.describe_error(err)
     ProtocolError(err) -> protocol.describe_error(err)
     TorrentError(err) -> download.describe_error(err)
+    CmdError(err) -> err
   }
 }
 

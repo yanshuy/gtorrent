@@ -1,7 +1,8 @@
 import bencode
 import gleam/bit_array
 import gleam/int
-import gleam/result.{map_error, try}
+import gleam/list
+import gleam/result.{map_error, replace_error, try}
 import mug.{ConnectionOptions}
 
 pub type PeerMessage {
@@ -13,7 +14,11 @@ pub type PeerMessage {
   BitField(BitArray)
   Request(piece_index: Int, begin: Int, length: Int)
   Piece(piece_index: Int, begin: Int, block: BitArray)
-  Extension
+  Extension(message: ExtensionMessage)
+}
+
+pub type ExtensionMessage {
+  Handshake(extensions: List(#(String, Int)))
 }
 
 pub type PeerId {
@@ -81,29 +86,46 @@ fn peer_handshake(
         False -> Error(InfoHashMismatch)
       }
     }
-    _ -> Error(InvalidResponse)
+    _ -> Error(InvalidMessage)
   }
 }
 
-pub fn extension_handshake(socket: mug.Socket) -> Result(Nil, ProtocolError) {
-  let id = message_id(Extension)
-  let extension_message_id = 0
-  let payload_dict =
-    bencode.encode(
-      bencode.BDict([
-        #("m", bencode.BDict([#("ut_metadata", bencode.BInteger(1))])),
-      ]),
-    )
-  let message_len = 1 + 1 + bit_array.byte_size(payload_dict)
+pub fn send_extended_handshake(
+  socket: mug.Socket,
+) -> Result(Nil, ProtocolError) {
+  let extensions = [#("ut_metadata", 10)]
+  let ext_message = Handshake(extensions: extensions)
 
+  let id = message_id(Extension(ext_message))
+  let ext_message_id = extension_message_id(ext_message)
+  let encoded = encode_extension_message(ext_message)
+
+  let message_len = 1 + 1 + bit_array.byte_size(encoded)
   let extension_message = <<
     message_len:big-size(32),
     id:int,
-    extension_message_id:int,
-    payload_dict:bits,
+    ext_message_id:int,
+    encoded:bits,
   >>
 
   send_message(socket, extension_message)
+}
+
+fn encode_extension_message(message: ExtensionMessage) {
+  case message {
+    Handshake(extensions) -> {
+      let extensions =
+        extensions
+        |> list.map(fn(item) { #(item.0, bencode.Int(item.1)) })
+        |> bencode.Dict
+      [
+        #("m", extensions),
+      ]
+      |> bencode.Dict
+      |> bencode.to_bencode
+      |> bencode.encode
+    }
+  }
 }
 
 pub fn log(m: PeerMessage) {
@@ -126,7 +148,7 @@ pub fn receive_message(
   use bits <- try(
     mug.receive_exact(socket, 4, message_timeout) |> map_error(TCPError),
   )
-  let assert <<message_length:unsigned-big-size(4 * 8)>> = bits
+  let assert <<message_length:unsigned-big-size(4)-unit(8)>> = bits
 
   case message_length {
     // keep alive
@@ -151,22 +173,60 @@ fn parse_message(message: BitArray) -> Result(PeerMessage, ProtocolError) {
     4 -> Ok(Have)
     5 -> Ok(BitField(payload))
     6 -> {
-      let assert <<
-        piece_index:big-size(4)-unit(8),
-        begin:big-size(4)-unit(8),
-        length:big-size(4)-unit(8),
-      >> = payload
-      Ok(Request(piece_index, begin, length))
+      case payload {
+        <<
+          piece_index:big-size(4)-unit(8),
+          begin:big-size(4)-unit(8),
+          length:big-size(4)-unit(8),
+        >> -> Ok(Request(piece_index, begin, length))
+        _ -> Error(InvalidMessage)
+      }
     }
     7 -> {
-      let assert <<
-        piece_index:big-size(4)-unit(8),
-        begin:big-size(4)-unit(8),
-        block:bits,
-      >> = payload
-      Ok(Piece(piece_index, begin, block))
+      case payload {
+        <<
+          piece_index:big-size(4)-unit(8),
+          begin:big-size(4)-unit(8),
+          block:bits,
+        >> -> Ok(Piece(piece_index, begin, block))
+        _ -> Error(InvalidMessage)
+      }
     }
+    20 -> parse_extension_message(payload)
+
     id -> Error(UnknownMessageId(id))
+  }
+}
+
+fn parse_extension_message(
+  message: BitArray,
+) -> Result(PeerMessage, ProtocolError) {
+  let assert <<extension_id:int, payload:bits>> = message
+  case extension_id {
+    0 -> {
+      use bencode <- try(bencode.decode(payload) |> map_error(BencodeError))
+
+      use dict <- try(
+        bencode.dict(bencode)
+        |> replace_error(ProtocolErrorMsg(
+          "invalid extension handshake response",
+        )),
+      )
+      use entries <- try(
+        bencode.get_entries(dict, "m")
+        |> replace_error(ProtocolErrorMsg("missing 'm' key in handshake")),
+      )
+      use extensions <- try(
+        list.try_map(entries, fn(entry) {
+          case entry {
+            #(key, bencode.BInteger(int)) -> Ok(#(key, int))
+            _ -> Error(ProtocolErrorMsg("invalid type inside 'm' dictionary"))
+          }
+        }),
+      )
+      Extension(Handshake(extensions)) |> Ok
+    }
+    _ -> Error(UnknownMessageId(extension_id))
   }
 }
 
@@ -178,29 +238,37 @@ pub fn message_id(message: PeerMessage) -> Int {
     NotInterested -> 3
     Have -> 4
     BitField(_) -> 5
-    Request(_, _, _) -> 6
-    Piece(_, _, _) -> 7
-    Extension -> 20
+    Request(..) -> 6
+    Piece(..) -> 7
+    Extension(..) -> 20
+  }
+}
+
+pub fn extension_message_id(message: ExtensionMessage) -> Int {
+  case message {
+    Handshake(_) -> 0
   }
 }
 
 pub type ProtocolError {
-  InvalidResponse
+  InvalidMessage
   InfoHashMismatch
   TCPError(mug.Error)
   UnknownMessageId(Int)
   UnexpectedMessage(Int)
   ProtocolErrorMsg(String)
+  BencodeError(bencode.BencodeError)
 }
 
 pub fn describe_error(error: ProtocolError) -> String {
   case error {
-    InvalidResponse -> "Received an invalid response from the peer"
+    InvalidMessage -> "Received an invalid message from the peer"
     InfoHashMismatch -> "Peer responded with a different info hash"
-    TCPError(err) -> mug.describe_error(err)
-    ProtocolErrorMsg(err) -> err
     UnknownMessageId(msg_id) -> "Unknown Message Id " <> int.to_string(msg_id)
     UnexpectedMessage(msg_id) ->
       "Unexpected peer message: " <> int.to_string(msg_id)
+    TCPError(err) -> mug.describe_error(err)
+    BencodeError(err) -> bencode.describe_error(err)
+    ProtocolErrorMsg(err) -> err
   }
 }

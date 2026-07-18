@@ -146,6 +146,23 @@ pub fn encode(value: Bencode) -> BitArray {
   }
 }
 
+pub type Value {
+  Int(Int)
+  String(String)
+  List(List(Value))
+  Dict(List(#(String, Value)))
+}
+
+pub fn to_bencode(value: Value) {
+  case value {
+    Int(int) -> BInteger(int)
+    String(string) -> BString(bit_array.from_string(string))
+    List(list) -> BList(list |> list.map(fn(item) { to_bencode(item) }))
+    Dict(dict) ->
+      BDict(dict |> list.map(fn(item) { #(item.0, to_bencode(item.1)) }))
+  }
+}
+
 fn encode_list(values: List(Bencode), acc: List(BitArray)) -> BitArray {
   case values {
     [] ->
@@ -189,15 +206,13 @@ pub fn to_json(value: Bencode) -> json.Json {
   }
 }
 
-pub fn dict(
-  meta_info: Bencode,
-) -> Result(dict.Dict(String, Bencode), BencodeError) {
-  case meta_info {
+pub fn dict(bencode: Bencode) -> Result(dict.Dict(String, Bencode), Nil) {
+  case bencode {
     BDict(entries) -> {
       let dict = dict.from_list(entries)
       Ok(dict)
     }
-    _ -> Error(InvalidTorrent("Not valid"))
+    _ -> Error(Nil)
   }
 }
 
@@ -270,6 +285,6 @@ pub fn describe_error(error: BencodeError) -> String {
     InvalidPrefix(byte) -> "Invalid prefix: " <> int.to_string(byte)
     NoColon -> "The ':' character is not found in the binary"
     MissingKey(key) -> "Missing Key: " <> key
-    InvalidTorrent(err) -> err
+    InvalidTorrent(err) -> "Invalid: " <> err
   }
 }

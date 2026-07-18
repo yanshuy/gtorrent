@@ -32,7 +32,10 @@ pub fn get_peers(
   use resp <- try(httpc.send_bits(req) |> map_error(HttpError))
   use resp_bencode <- try(bencode.decode(resp.body) |> map_error(DecodeError))
 
-  use dict <- try(bencode.dict(resp_bencode) |> map_error(DecodeError))
+  use dict <- try(
+    bencode.dict(resp_bencode)
+    |> replace_error(InvalidResponse("expected response to be a dict")),
+  )
   use peers <- try(bencode.get_value(dict, "peers") |> map_error(DecodeError))
 
   decode_peers(peers)

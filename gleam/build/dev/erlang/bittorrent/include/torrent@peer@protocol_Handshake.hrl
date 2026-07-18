@@ -1,0 +1,1 @@
+-record(handshake, {extensions :: list({binary(), integer()})}).

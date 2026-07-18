@@ -1,0 +1,1 @@
+-record(extension, {message :: torrent@peer@protocol:extension_message()}).
