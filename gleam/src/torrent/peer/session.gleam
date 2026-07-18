@@ -9,6 +9,7 @@ import gleam/pair
 import gleam/result.{map_error, try}
 import mug
 import torrent/messages
+import torrent/peer/extension
 import torrent/peer/protocol.{
   BitField, Choke, Extension, Have, Interested, Piece, Unchoke,
 }
@@ -70,7 +71,7 @@ pub fn new_session(
 fn extended_handshake(socket, supported) -> Result(Nil, PeerError) {
   case supported {
     True ->
-      protocol.send_extended_handshake(socket)
+      extension.send_handshake(socket)
       |> map_error(ProtocolError)
     False -> Ok(Nil)
   }
@@ -303,6 +304,7 @@ fn handle_extension_message(session, message: protocol.ExtensionMessage) {
       let extensions = dict.from_list(extensions)
       PeerSession(..session, extensions: Some(extensions))
     }
+    protocol.MetadataRequest(piece_index:) -> todo
   }
 }
 

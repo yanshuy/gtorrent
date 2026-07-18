@@ -1,9 +1,10 @@
 import bencode
-import gleam/bit_array
 import gleam/int
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import mug.{ConnectionOptions}
+
+// import torrent/peer/extension
 
 pub type PeerMessage {
   Choke
@@ -19,6 +20,7 @@ pub type PeerMessage {
 
 pub type ExtensionMessage {
   Handshake(extensions: List(#(String, Int)))
+  MetadataRequest(piece_index: Int)
 }
 
 pub type PeerId {
@@ -87,44 +89,6 @@ fn peer_handshake(
       }
     }
     _ -> Error(InvalidMessage)
-  }
-}
-
-pub fn send_extended_handshake(
-  socket: mug.Socket,
-) -> Result(Nil, ProtocolError) {
-  let extensions = [#("ut_metadata", 10)]
-  let ext_message = Handshake(extensions: extensions)
-
-  let id = message_id(Extension(ext_message))
-  let ext_message_id = extension_message_id(ext_message)
-  let encoded = encode_extension_message(ext_message)
-
-  let message_len = 1 + 1 + bit_array.byte_size(encoded)
-  let extension_message = <<
-    message_len:big-size(32),
-    id:int,
-    ext_message_id:int,
-    encoded:bits,
-  >>
-
-  send_message(socket, extension_message)
-}
-
-fn encode_extension_message(message: ExtensionMessage) {
-  case message {
-    Handshake(extensions) -> {
-      let extensions =
-        extensions
-        |> list.map(fn(item) { #(item.0, bencode.Int(item.1)) })
-        |> bencode.Dict
-      [
-        #("m", extensions),
-      ]
-      |> bencode.Dict
-      |> bencode.to_bencode
-      |> bencode.encode
-    }
   }
 }
 
@@ -198,7 +162,7 @@ fn parse_message(message: BitArray) -> Result(PeerMessage, ProtocolError) {
   }
 }
 
-fn parse_extension_message(
+pub fn parse_extension_message(
   message: BitArray,
 ) -> Result(PeerMessage, ProtocolError) {
   let assert <<extension_id:int, payload:bits>> = message
@@ -241,12 +205,6 @@ pub fn message_id(message: PeerMessage) -> Int {
     Request(..) -> 6
     Piece(..) -> 7
     Extension(..) -> 20
-  }
-}
-
-pub fn extension_message_id(message: ExtensionMessage) -> Int {
-  case message {
-    Handshake(_) -> 0
   }
 }
 

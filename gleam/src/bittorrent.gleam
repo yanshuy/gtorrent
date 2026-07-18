@@ -9,8 +9,10 @@ import gleam/json
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
+import mug
 import simplifile
 import torrent/download
+import torrent/peer/extension
 import torrent/peer/protocol
 import torrent/peer/session
 import torrent/torrent
@@ -83,6 +85,12 @@ pub fn execute_cmd(args: List(String)) -> Result(Nil, CmdError) {
       case rest {
         [magnet_link] -> cmd_magnet_handshake(magnet_link)
         _ -> Error(InsufficientArguments("magnet_handshake"))
+      }
+
+    ["magnet_info", ..rest] ->
+      case rest {
+        [magnet_link] -> cmd_magnet_info(magnet_link)
+        _ -> Error(InsufficientArguments("magnet_info"))
       }
 
     [command, ..] -> Error(UnknownCommand(command))
@@ -166,13 +174,7 @@ fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
     protocol.handshake(endpoint, torrent.info_hash, peer_id)
     |> map_error(ProtocolError),
   )
-  let protocol.PeerId(id) = peer_peer_id
-  io.println(
-    "Peer ID: "
-    <> id
-    |> bit_array.base16_encode
-    |> string.lowercase,
-  )
+  log_peer_id(peer_peer_id)
   Ok(Nil)
 }
 
@@ -263,6 +265,25 @@ fn cmd_parse_magnet(magnet_link: String) -> Result(Nil, CmdError) {
   Ok(Nil)
 }
 
+fn extension_handshake(socket: mug.Socket, peer_id: protocol.PeerId) {
+  let session = session.new_session(socket, peer_id)
+  use session <- try(session.receive_bitfield(session) |> map_error(PeerError))
+  use _ <- try(
+    extension.send_handshake(session.socket)
+    |> map_error(ProtocolError),
+  )
+
+  session.receive_until(session.socket, fn(message) {
+    case message {
+      protocol.Extension(protocol.Handshake(extensions)) -> {
+        Ok(extensions)
+      }
+      _ -> Error(Nil)
+    }
+  })
+  |> map_error(PeerError)
+}
+
 fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
   use magnet_info <- try(
@@ -274,8 +295,7 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
   )
 
   use <- bool.lazy_guard(list.is_empty(peers), return: fn() {
-    io.println("No peers")
-    Ok(Nil)
+    io.println("No peers") |> Ok
   })
   let assert [first, ..] = peers
 
@@ -285,43 +305,57 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
     protocol.handshake(endpoint, magnet_info.info_hash, peer_id)
     |> map_error(ProtocolError),
   )
-  let session = session.new_session(socket, peer_peer_id)
-  use session <- try(session.receive_bitfield(session) |> map_error(PeerError))
-  use _ <- try(
-    protocol.send_extended_handshake(session.socket)
-    |> map_error(ProtocolError),
-  )
 
-  use extension <- try(
-    session.receive_until(session.socket, fn(message) {
-      echo message
-      case message {
-        protocol.Extension(protocol.Handshake(extensions)) -> {
-          Ok(extensions)
-        }
-        _ -> Error(Nil)
-      }
-    })
-    |> map_error(PeerError),
-  )
+  use extensions <- try(extension_handshake(socket, peer_peer_id))
   // use session <- try(session.wait_unchoke(session) |> map_error(PeerError))
 
   use metadata_extension_id <- try(
-    extension
+    extensions
     |> list.key_find("ut_metadata")
     |> replace_error(CmdError("ut_metadata not found in extensions")),
   )
 
-  let protocol.PeerId(id) = peer_peer_id
-  io.println(
-    "Peer ID: "
-    <> id
-    |> bit_array.base16_encode
-    |> string.lowercase,
-  )
+  log_peer_id(peer_peer_id)
   io.println(
     "Peer Metadata Extension ID: " <> metadata_extension_id |> int.to_string,
   )
+  Ok(Nil)
+}
+
+fn cmd_magnet_info(magnet_link: String) -> Result(Nil, CmdError) {
+  use peer_id <- try(load_peer_id() |> map_error(FileError))
+  use magnet_info <- try(
+    torrent.parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
+  )
+  use peers <- try(
+    tracker.get_peers(magnet_info.announce, magnet_info.info_hash, 10, peer_id)
+    |> map_error(TrackerError),
+  )
+
+  use <- bool.lazy_guard(list.is_empty(peers), return: fn() {
+    io.println("No peers") |> Ok
+  })
+  let assert [first, ..] = peers
+
+  use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
+
+  use #(socket, peer_peer_id, _extension) <- try(
+    protocol.handshake(endpoint, magnet_info.info_hash, peer_id)
+    |> map_error(ProtocolError),
+  )
+
+  use extensions <- try(extension_handshake(socket, peer_peer_id))
+  // use session <- try(session.wait_unchoke(session) |> map_error(PeerError))
+  use extension_id <- try(
+    extensions
+    |> list.key_find("ut_metadata")
+    |> replace_error(CmdError("ut_metadata extension not supported by peer")),
+  )
+  use _ <- try(
+    extension.send_metadata_request(socket, extension_id)
+    |> map_error(ProtocolError),
+  )
+
   Ok(Nil)
 }
 
@@ -335,6 +369,16 @@ fn load_peer_id() -> Result(protocol.PeerId, simplifile.FileError) {
       Ok(protocol.PeerId(peer_id))
     }
   }
+}
+
+fn log_peer_id(peer_id: protocol.PeerId) {
+  let protocol.PeerId(id) = peer_id
+  io.println(
+    "Peer ID: "
+    <> id
+    |> bit_array.base16_encode
+    |> string.lowercase,
+  )
 }
 
 pub type CmdError {
