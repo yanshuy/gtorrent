@@ -11,7 +11,6 @@ import gleam/uri
 pub type TorrentInfo {
   TorrentInfo(
     name: String,
-    announce: String,
     length: Int,
     piece_length: Int,
     pieces: List(BitArray),
@@ -21,7 +20,7 @@ pub type TorrentInfo {
 
 pub fn parse(
   meta_info: bencode.Bencode,
-) -> Result(TorrentInfo, bencode.BencodeError) {
+) -> Result(#(String, TorrentInfo), bencode.BencodeError) {
   use dict <- try(
     bencode.dict(meta_info)
     |> replace_error(bencode.InvalidTorrent("expected meta info to be a dict")),
@@ -38,21 +37,47 @@ pub fn parse(
   use piece_length <- try(bencode.get_int(info, "piece length"))
   use pieces <- try(bencode.get_string_bits(info, "pieces"))
 
-  Ok(TorrentInfo(
+  #(
+    announce,
+    TorrentInfo(
+      name: name,
+      length: length,
+      piece_length: piece_length,
+      pieces: split_piece_hashes(pieces),
+      info_hash: info_hash(info_entries),
+    ),
+  )
+  |> Ok
+}
+
+pub fn parse_metadata(
+  metadata: bencode.Bencode,
+  info_hash: BitArray,
+) -> Result(TorrentInfo, bencode.BencodeError) {
+  use dict <- try(
+    bencode.dict(metadata)
+    |> replace_error(bencode.InvalidTorrent("expected meta info to be a dict")),
+  )
+
+  let name = bencode.get_string(dict, "name") |> result.unwrap("Unknown")
+  use length <- try(bencode.get_int(dict, "length"))
+
+  use piece_length <- try(bencode.get_int(dict, "piece length"))
+  use pieces <- try(bencode.get_string_bits(dict, "pieces"))
+
+  TorrentInfo(
     name: name,
-    announce: announce,
     length: length,
     piece_length: piece_length,
     pieces: split_piece_hashes(pieces),
-    info_hash: info_hash(info_entries),
-  ))
+    info_hash: info_hash,
+  )
+  |> Ok
 }
 
-pub type MagnetInfo {
-  MagnetInfo(announce: String, info_hash: BitArray)
-}
-
-pub fn parse_magnet(magnet_link: String) -> Result(MagnetInfo, String) {
+pub fn parse_magnet(
+  magnet_link: String,
+) -> Result(#(String, BitArray), String) {
   use #(_, query_param) <- try(
     string.split_once(magnet_link, "?")
     |> replace_error("invalid magnet link"),
@@ -83,7 +108,7 @@ pub fn parse_magnet(magnet_link: String) -> Result(MagnetInfo, String) {
     |> replace_error("invalid 'xt' (Info Hash)"),
   )
 
-  MagnetInfo(announce: announce, info_hash: info_hash) |> Ok
+  #(announce, info_hash) |> Ok
 }
 
 pub fn info_hash(info_entries: List(#(String, bencode.Bencode))) -> BitArray {

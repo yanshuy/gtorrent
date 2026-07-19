@@ -1,11 +1,8 @@
 import bencode
 import gleam/bit_array
 import gleam/list
-import gleam/result.{replace_error, try}
 import mug
 import torrent/peer/protocol.{Handshake, MetadataRequest}
-
-// import torrent/peer/protocol
 
 const message_id = 20
 
@@ -61,5 +58,6 @@ fn encode_extension_message(message: protocol.ExtensionMessage) {
       |> bencode.to_bencode
       |> bencode.encode
     }
+    _ -> todo
   }
 }

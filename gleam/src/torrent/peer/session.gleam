@@ -304,6 +304,7 @@ fn handle_extension_message(session, message: protocol.ExtensionMessage) {
       let extensions = dict.from_list(extensions)
       PeerSession(..session, extensions: Some(extensions))
     }
+    protocol.MetadataPiece(piece_index, piece) -> todo
     protocol.MetadataRequest(piece_index:) -> todo
   }
 }

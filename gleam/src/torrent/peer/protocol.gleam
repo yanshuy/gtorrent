@@ -21,6 +21,7 @@ pub type PeerMessage {
 pub type ExtensionMessage {
   Handshake(extensions: List(#(String, Int)))
   MetadataRequest(piece_index: Int)
+  MetadataPiece(piece_index: Int, piece: BitArray)
 }
 
 pub type PeerId {
@@ -169,26 +170,44 @@ pub fn parse_extension_message(
   case extension_id {
     0 -> {
       use bencode <- try(bencode.decode(payload) |> map_error(BencodeError))
-
       use dict <- try(
         bencode.dict(bencode)
-        |> replace_error(ProtocolErrorMsg(
-          "invalid extension handshake response",
-        )),
+        |> replace_error(InvalidMessage),
       )
       use entries <- try(
         bencode.get_entries(dict, "m")
-        |> replace_error(ProtocolErrorMsg("missing 'm' key in handshake")),
+        |> replace_error(InvalidMessage),
       )
       use extensions <- try(
         list.try_map(entries, fn(entry) {
           case entry {
             #(key, bencode.BInteger(int)) -> Ok(#(key, int))
-            _ -> Error(ProtocolErrorMsg("invalid type inside 'm' dictionary"))
+            _ -> Error(InvalidMessage)
           }
         }),
       )
       Extension(Handshake(extensions)) |> Ok
+    }
+
+    10 -> {
+      use #(bencode, piece) <- try(
+        bencode.decode_loop(payload) |> map_error(BencodeError),
+      )
+      use entries <- try(case bencode {
+        bencode.BDict(entries) ->
+          list.try_map(entries, fn(entry) {
+            case entry {
+              #(key, bencode.BInteger(int)) -> #(key, int) |> Ok
+              _ -> Error(InvalidMessage)
+            }
+          })
+        _ -> Error(InvalidMessage)
+      })
+
+      use piece_index <- try(
+        entries |> list.key_find("piece") |> replace_error(InvalidMessage),
+      )
+      Extension(MetadataPiece(piece_index, piece)) |> Ok
     }
     _ -> Error(UnknownMessageId(extension_id))
   }

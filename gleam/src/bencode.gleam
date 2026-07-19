@@ -29,7 +29,9 @@ pub fn decode(encoded_value: BitArray) -> Result(Bencode, BencodeError) {
   Ok(value)
 }
 
-fn decode_loop(bits: BitArray) -> Result(#(Bencode, BitArray), BencodeError) {
+pub fn decode_loop(
+  bits: BitArray,
+) -> Result(#(Bencode, BitArray), BencodeError) {
   case bits {
     <<"i":utf8, rest:bits>> -> decode_integer(rest)
 

@@ -108,7 +108,7 @@ fn cmd_decode(encode_str: String) -> Result(Nil, CmdError) {
   Ok(Nil)
 }
 
-fn info(filename: String) -> Result(torrent.TorrentInfo, CmdError) {
+fn info(filename: String) -> Result(#(String, torrent.TorrentInfo), CmdError) {
   use bits <- try(simplifile.read_bits(filename) |> map_error(FileError))
   use data <- try(bencode.decode(bits) |> map_error(DecodeError))
 
@@ -116,9 +116,9 @@ fn info(filename: String) -> Result(torrent.TorrentInfo, CmdError) {
 }
 
 fn cmd_info(filename: String) -> Result(Nil, CmdError) {
-  use torrent <- try(info(filename))
+  use #(tracker_url, torrent) <- try(info(filename))
 
-  io.println("Tracker URL: " <> torrent.announce)
+  io.println("Tracker URL: " <> tracker_url)
   io.println("Length: " <> int.to_string(torrent.length))
 
   let encoded =
@@ -141,14 +141,9 @@ fn cmd_info(filename: String) -> Result(Nil, CmdError) {
 fn cmd_peers(filename: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
 
-  use torrent <- try(info(filename))
+  use #(tracker_url, torrent) <- try(info(filename))
   use peers <- try(
-    tracker.get_peers(
-      torrent.announce,
-      torrent.info_hash,
-      torrent.length,
-      peer_id,
-    )
+    tracker.get_peers(tracker_url, torrent.info_hash, torrent.length, peer_id)
     |> map_error(TrackerError),
   )
   io.println(string.join(peers, with: "\n"))
@@ -167,7 +162,7 @@ fn new_endpoint(endpoint: String) -> Result(protocol.Endpoint, Nil) {
 
 fn cmd_handshake(filename: String, endpoint: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
-  use torrent <- try(info(filename))
+  use #(_, torrent) <- try(info(filename))
 
   use endpoint <- try(new_endpoint(endpoint) |> replace_error(InvalidEndpoint))
   use #(_socket, peer_peer_id, _) <- try(
@@ -187,15 +182,10 @@ fn cmd_download_piece(
     int.parse(piece_index_str) |> replace_error(InvalidArguments),
   )
   use peer_id <- try(load_peer_id() |> map_error(FileError))
-  use torrent <- try(info(torrent_file))
+  use #(tracker_url, torrent) <- try(info(torrent_file))
 
   use peers <- try(
-    tracker.get_peers(
-      torrent.announce,
-      torrent.info_hash,
-      torrent.length,
-      peer_id,
-    )
+    tracker.get_peers(tracker_url, torrent.info_hash, torrent.length, peer_id)
     |> map_error(TrackerError),
   )
 
@@ -225,15 +215,10 @@ fn cmd_download(
   torrent_file: String,
 ) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
-  use torrent <- try(info(torrent_file))
+  use #(tracker_url, torrent) <- try(info(torrent_file))
 
   use peer_endpoints <- try(
-    tracker.get_peers(
-      torrent.announce,
-      torrent.info_hash,
-      torrent.length,
-      peer_id,
-    )
+    tracker.get_peers(tracker_url, torrent.info_hash, torrent.length, peer_id)
     |> map_error(TrackerError),
   )
   use endpoints <- try(
@@ -252,13 +237,13 @@ fn cmd_download(
 }
 
 fn cmd_parse_magnet(magnet_link: String) -> Result(Nil, CmdError) {
-  use magnet_info <- try(
+  use #(tracker_url, info_hash) <- try(
     torrent.parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
   )
-  io.println("Tracker URL: " <> magnet_info.announce)
+  io.println("Tracker URL: " <> tracker_url)
   io.println(
     "Info Hash: "
-    <> magnet_info.info_hash
+    <> info_hash
     |> bit_array.base16_encode
     |> string.lowercase,
   )
@@ -286,11 +271,11 @@ fn extension_handshake(socket: mug.Socket, peer_id: protocol.PeerId) {
 
 fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
-  use magnet_info <- try(
+  use #(tracker_url, info_hash) <- try(
     torrent.parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
   )
   use peers <- try(
-    tracker.get_peers(magnet_info.announce, magnet_info.info_hash, 10, peer_id)
+    tracker.get_peers(tracker_url, info_hash, 10, peer_id)
     |> map_error(TrackerError),
   )
 
@@ -302,12 +287,11 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
   use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
 
   use #(socket, peer_peer_id, _extension) <- try(
-    protocol.handshake(endpoint, magnet_info.info_hash, peer_id)
+    protocol.handshake(endpoint, info_hash, peer_id)
     |> map_error(ProtocolError),
   )
 
   use extensions <- try(extension_handshake(socket, peer_peer_id))
-  // use session <- try(session.wait_unchoke(session) |> map_error(PeerError))
 
   use metadata_extension_id <- try(
     extensions
@@ -324,11 +308,11 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
 
 fn cmd_magnet_info(magnet_link: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
-  use magnet_info <- try(
+  use #(tracker_url, info_hash) <- try(
     torrent.parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
   )
   use peers <- try(
-    tracker.get_peers(magnet_info.announce, magnet_info.info_hash, 10, peer_id)
+    tracker.get_peers(tracker_url, info_hash, 10, peer_id)
     |> map_error(TrackerError),
   )
 
@@ -340,7 +324,7 @@ fn cmd_magnet_info(magnet_link: String) -> Result(Nil, CmdError) {
   use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
 
   use #(socket, peer_peer_id, _extension) <- try(
-    protocol.handshake(endpoint, magnet_info.info_hash, peer_id)
+    protocol.handshake(endpoint, info_hash, peer_id)
     |> map_error(ProtocolError),
   )
 
@@ -356,6 +340,39 @@ fn cmd_magnet_info(magnet_link: String) -> Result(Nil, CmdError) {
     |> map_error(ProtocolError),
   )
 
+  use data <- try(
+    session.receive_until(socket, fn(message) {
+      case message {
+        protocol.Extension(protocol.MetadataPiece(_piece_index, piece)) ->
+          Ok(piece)
+        _ -> Error(Nil)
+      }
+    })
+    |> map_error(PeerError),
+  )
+  use bencode <- try(bencode.decode(data) |> map_error(DecodeError))
+
+  use torrent <- try(
+    torrent.parse_metadata(bencode, info_hash) |> map_error(DecodeError),
+  )
+
+  io.println("Tracker URL: " <> tracker_url)
+  io.println("Length: " <> int.to_string(torrent.length))
+
+  let encoded =
+    torrent.info_hash
+    |> bit_array.base16_encode
+    |> string.lowercase
+  io.println("Info Hash: " <> encoded)
+  io.println("Piece Length: " <> int.to_string(torrent.piece_length))
+
+  let hashes =
+    torrent.pieces
+    |> list.map(bit_array.base16_encode)
+    |> list.map(string.lowercase)
+    |> string.join(with: "\n")
+
+  io.println("Piece Hashes: \n" <> hashes)
   Ok(Nil)
 }
 
