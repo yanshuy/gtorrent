@@ -1,3 +1,4 @@
+import bencode
 import gleam/bit_array
 import gleam/bool
 import gleam/dict
@@ -6,12 +7,13 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/pair
-import gleam/result.{map_error, try}
+import gleam/result.{map_error, replace_error, try}
 import mug
 import torrent/messages
 import torrent/peer/extension
 import torrent/peer/protocol.{
-  BitField, Choke, Extension, Have, Interested, Piece, Unchoke,
+  BitField, Choke, Extension, Handshake, Have, Interested, MetadataPiece, Piece,
+  Unchoke,
 }
 import torrent/torrent
 
@@ -412,16 +414,33 @@ pub fn is_any_bit_set(bitfield: BitArray) -> Bool {
 }
 
 pub fn download_piece(
-  socket: mug.Socket,
-  peer_id: protocol.PeerId,
-  piece: torrent.PieceInfo,
-) -> Result(BitArray, PeerError) {
-  let session = new_session(socket, peer_id)
+  session: PeerSession,
+  piece: torrent.Piece,
+) -> Result(#(BitArray, torrent.PieceInfo), PeerError) {
   use session <- try(receive_bitfield(session))
+
+  use #(session, piece_info) <- try(case piece {
+    torrent.Piece(piece) -> #(session, piece) |> Ok
+    torrent.PieceIndex(idx) -> {
+      use #(session, extensions) <- try(extension_handshake(session))
+      use #(session, metadata) <- try(extension_metadata(session, extensions))
+      use torrent <- try(
+        torrent.from_metadata(metadata, <<>>) |> map_error(DecodeError),
+      )
+      use piece <- try(
+        torrent.new_pieces(torrent.length, torrent.piece_length, torrent.pieces)
+        |> list.drop(idx)
+        |> list.first
+        |> replace_error(PeerError("invalid piece index")),
+      )
+      #(session, piece) |> Ok
+    }
+  })
+
   use session <- try(send_interested(session))
   use session <- try(wait_unchoke(session))
 
-  let piece = new_piece_download(piece)
+  let piece = new_piece_download(piece_info)
   use piece <- try(request_piece_blocks(session, piece))
   use piece <- try(receive_all_blocks(session, piece))
 
@@ -430,7 +449,51 @@ pub fn download_piece(
     |> list.sort(fn(a, b) { int.compare(a.0, b.0) })
     |> list.map(pair.second)
 
-  bit_array.concat(blocks) |> Ok
+  let data = bit_array.concat(blocks)
+  #(data, piece_info) |> Ok
+}
+
+pub fn extension_handshake(session: PeerSession) {
+  use _ <- try(
+    extension.send_handshake(session.socket)
+    |> map_error(ProtocolError),
+  )
+
+  let is_handshake = fn(message) {
+    case message {
+      Extension(Handshake(..)) -> True
+      _ -> False
+    }
+  }
+  use #(session, message) <- try(receive_until(session, is_handshake))
+
+  let assert Extension(Handshake(extensions)) = message
+  #(session, extensions) |> Ok
+}
+
+pub fn extension_metadata(
+  session: PeerSession,
+  extensions: List(#(String, Int)),
+) {
+  use extension_id <- try(
+    list.key_find(extensions, "ut_metadata")
+    |> replace_error(PeerError("ut_metadata extension not supported by peer")),
+  )
+  use _ <- try(
+    extension.send_metadata_request(session.socket, extension_id)
+    |> map_error(ProtocolError),
+  )
+  let is_metadata_piece = fn(message) {
+    case message {
+      Extension(MetadataPiece(..)) -> True
+      _ -> False
+    }
+  }
+  use #(session, message) <- try(receive_until(session, is_metadata_piece))
+
+  let assert Extension(MetadataPiece(_, piece)) = message
+  use bencode <- try(bencode.decode(piece) |> map_error(DecodeError))
+  #(session, bencode) |> Ok
 }
 
 pub fn receive_bitfield(
@@ -447,12 +510,18 @@ pub fn receive_bitfield(
 }
 
 pub fn wait_unchoke(session: PeerSession) -> Result(PeerSession, PeerError) {
-  receive_until(session.socket, fn(message) {
-    case message {
-      Unchoke -> PeerSession(..session, choked: False) |> Ok
-      _ -> Error(Nil)
+  case session.choked {
+    True -> {
+      receive_until(session, fn(message) {
+        case message {
+          Unchoke -> True
+          _ -> False
+        }
+      })
+      |> result.map(pair.first)
     }
-  })
+    False -> Ok(session)
+  }
 }
 
 fn receive_all_blocks(
@@ -481,15 +550,17 @@ fn receive_all_blocks(
 }
 
 pub fn receive_until(
-  socket: mug.Socket,
-  done: fn(protocol.PeerMessage) -> Result(a, Nil),
-) -> Result(a, PeerError) {
-  use message <- try(
-    protocol.receive_message(socket) |> map_error(ProtocolError),
+  session: PeerSession,
+  stop: fn(protocol.PeerMessage) -> Bool,
+) -> Result(#(PeerSession, protocol.PeerMessage), PeerError) {
+  use rx_message <- try(
+    protocol.receive_message(session.socket) |> map_error(ProtocolError),
   )
-  case done(message) {
-    Ok(result) -> Ok(result)
-    Error(_) -> receive_until(socket, done)
+  use session <- try(handle_message(session, rx_message))
+
+  case stop(rx_message) {
+    True -> #(session, rx_message) |> Ok
+    False -> receive_until(session, stop)
   }
 }
 
@@ -516,20 +587,22 @@ fn piece_block_requests_loop(
 }
 
 pub type PeerError {
-  PeerError(String)
-  UnexpectedMessage(Int)
-  ProtocolError(protocol.ProtocolError)
   InvalidBlock
   DuplicateBitfield
+  UnexpectedMessage(Int)
+  PeerError(String)
+  ProtocolError(protocol.ProtocolError)
+  DecodeError(bencode.BencodeError)
 }
 
 pub fn describe_error(error: PeerError) -> String {
   case error {
     PeerError(reason) -> "Peer error: " <> reason
     UnexpectedMessage(id) -> "Unexpected message ID: " <> int.to_string(id)
-    ProtocolError(protocol_err) -> protocol.describe_error(protocol_err)
+    ProtocolError(err) -> protocol.describe_error(err)
     InvalidBlock -> "Received an invalid data block length, offset, or payload"
     DuplicateBitfield ->
       "Protocol violation: peer sent a second bitfield message"
+    DecodeError(err) -> bencode.describe_error(err)
   }
 }

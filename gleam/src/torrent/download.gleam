@@ -7,6 +7,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
 import simplifile
 import torrent/messages.{
@@ -15,20 +16,6 @@ import torrent/messages.{
 import torrent/peer/protocol
 import torrent/peer/session
 import torrent/torrent
-
-// pub type Torrent {
-//   Connet(
-//     endpoints: List(protocol.Endpoint),
-//     torrent: Option(torrent.TorrentInfo),
-//   )
-//   Metainfo(peers: dict.Dict(protocol.PeerId, BitArray))
-//   Download(
-//     peers: dict.Dict(protocol.PeerId, BitArray),
-//     info: torrent.TorrentInfo,
-//     pending_pieces: List(torrent.PieceInfo),
-//     leased_pieces: List(torrent.PieceInfo),
-//   )
-// }
 
 pub type TorrentState {
   TorrentState(
@@ -227,17 +214,11 @@ pub fn is_bit_set(bits: BitArray, index: Int) -> Bool {
 
 pub fn download_piece(
   download_path: String,
-  endpoint: protocol.Endpoint,
-  torrent: torrent.TorrentInfo,
-  peer_id: protocol.PeerId,
-  piece: torrent.PieceInfo,
+  piece: torrent.Piece,
+  session: session.PeerSession,
 ) -> Result(Nil, TorrentError) {
-  use #(socket, peer_peer_id, _extension) <- try(
-    protocol.handshake(endpoint, torrent.info_hash, peer_id)
-    |> result.map_error(ProtocolError),
-  )
-  use data <- try(
-    session.download_piece(socket, peer_peer_id, piece)
+  use #(data, piece) <- try(
+    session.download_piece(session, piece)
     |> result.map_error(PeerError),
   )
 

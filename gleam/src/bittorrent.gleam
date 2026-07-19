@@ -93,6 +93,13 @@ pub fn execute_cmd(args: List(String)) -> Result(Nil, CmdError) {
         _ -> Error(InsufficientArguments("magnet_info"))
       }
 
+    ["magnet_download_piece", ..rest] ->
+      case rest {
+        ["-o", download_path, magnet_link, piece_index_str] ->
+          cmd_magnet_download_piece(download_path, magnet_link, piece_index_str)
+        _ -> Error(InsufficientArguments("magnet_download_piece"))
+      }
+
     [command, ..] -> Error(UnknownCommand(command))
   }
 }
@@ -188,15 +195,12 @@ fn cmd_download_piece(
     tracker.get_peers(tracker_url, torrent.info_hash, torrent.length, peer_id)
     |> map_error(TrackerError),
   )
-
-  use endpoint <- try(
-    peers
-    |> list.first
-    |> replace_error(InvalidArguments),
+  use first <- try(
+    list.first(peers)
+    |> replace_error(CmdError("No peers")),
   )
-
   use endpoint <- try(
-    new_endpoint(endpoint)
+    new_endpoint(first)
     |> replace_error(InvalidEndpoint),
   )
 
@@ -206,7 +210,15 @@ fn cmd_download_piece(
     |> list.first
     |> replace_error(InvalidPieceIndex(piece_index)),
   )
-  download.download_piece(download_path, endpoint, torrent, peer_id, piece)
+  let piece = torrent.Piece(piece)
+
+  use #(socket, peer_peer_id, _extension) <- try(
+    protocol.handshake(endpoint, torrent.info_hash, peer_id)
+    |> result.map_error(ProtocolError),
+  )
+  let session = session.new_session(socket, peer_peer_id)
+
+  download.download_piece(download_path, piece, session)
   |> map_error(TorrentError)
 }
 
@@ -250,25 +262,6 @@ fn cmd_parse_magnet(magnet_link: String) -> Result(Nil, CmdError) {
   Ok(Nil)
 }
 
-fn extension_handshake(socket: mug.Socket, peer_id: protocol.PeerId) {
-  let session = session.new_session(socket, peer_id)
-  use session <- try(session.receive_bitfield(session) |> map_error(PeerError))
-  use _ <- try(
-    extension.send_handshake(session.socket)
-    |> map_error(ProtocolError),
-  )
-
-  session.receive_until(session.socket, fn(message) {
-    case message {
-      protocol.Extension(protocol.Handshake(extensions)) -> {
-        Ok(extensions)
-      }
-      _ -> Error(Nil)
-    }
-  })
-  |> map_error(PeerError)
-}
-
 fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
   use peer_id <- try(load_peer_id() |> map_error(FileError))
   use #(tracker_url, info_hash) <- try(
@@ -278,20 +271,21 @@ fn cmd_magnet_handshake(magnet_link: String) -> Result(Nil, CmdError) {
     tracker.get_peers(tracker_url, info_hash, 10, peer_id)
     |> map_error(TrackerError),
   )
-
   use <- bool.lazy_guard(list.is_empty(peers), return: fn() {
     io.println("No peers") |> Ok
   })
   let assert [first, ..] = peers
-
   use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
 
   use #(socket, peer_peer_id, _extension) <- try(
     protocol.handshake(endpoint, info_hash, peer_id)
     |> map_error(ProtocolError),
   )
+  let session = session.new_session(socket, peer_peer_id)
 
-  use extensions <- try(extension_handshake(socket, peer_peer_id))
+  use #(_, extensions) <- try(
+    session.extension_handshake(session) |> map_error(PeerError),
+  )
 
   use metadata_extension_id <- try(
     extensions
@@ -320,42 +314,24 @@ fn cmd_magnet_info(magnet_link: String) -> Result(Nil, CmdError) {
     io.println("No peers") |> Ok
   })
   let assert [first, ..] = peers
-
   use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
 
   use #(socket, peer_peer_id, _extension) <- try(
     protocol.handshake(endpoint, info_hash, peer_id)
     |> map_error(ProtocolError),
   )
+  let session = session.new_session(socket, peer_peer_id)
 
-  use extensions <- try(extension_handshake(socket, peer_peer_id))
-  // use session <- try(session.wait_unchoke(session) |> map_error(PeerError))
-  use extension_id <- try(
-    extensions
-    |> list.key_find("ut_metadata")
-    |> replace_error(CmdError("ut_metadata extension not supported by peer")),
+  use #(session, extensions) <- try(
+    session.extension_handshake(session) |> map_error(PeerError),
   )
-  use _ <- try(
-    extension.send_metadata_request(socket, extension_id)
-    |> map_error(ProtocolError),
+  use #(_, bencode) <- try(
+    session.extension_metadata(session, extensions) |> map_error(PeerError),
   )
-
-  use data <- try(
-    session.receive_until(socket, fn(message) {
-      case message {
-        protocol.Extension(protocol.MetadataPiece(_piece_index, piece)) ->
-          Ok(piece)
-        _ -> Error(Nil)
-      }
-    })
-    |> map_error(PeerError),
-  )
-  use bencode <- try(bencode.decode(data) |> map_error(DecodeError))
 
   use torrent <- try(
-    torrent.parse_metadata(bencode, info_hash) |> map_error(DecodeError),
+    torrent.from_metadata(bencode, info_hash) |> map_error(DecodeError),
   )
-
   io.println("Tracker URL: " <> tracker_url)
   io.println("Length: " <> int.to_string(torrent.length))
 
@@ -374,6 +350,40 @@ fn cmd_magnet_info(magnet_link: String) -> Result(Nil, CmdError) {
 
   io.println("Piece Hashes: \n" <> hashes)
   Ok(Nil)
+}
+
+fn cmd_magnet_download_piece(
+  download_path: String,
+  magnet_link: String,
+  piece_index_str: String,
+) -> Result(Nil, CmdError) {
+  use piece_index <- try(
+    int.parse(piece_index_str) |> replace_error(InvalidArguments),
+  )
+  use peer_id <- try(load_peer_id() |> map_error(FileError))
+  use #(tracker_url, info_hash) <- try(
+    torrent.parse_magnet(magnet_link) |> replace_error(InvalidMagnetLink),
+  )
+  use peers <- try(
+    tracker.get_peers(tracker_url, info_hash, 10, peer_id)
+    |> map_error(TrackerError),
+  )
+
+  use <- bool.lazy_guard(list.is_empty(peers), return: fn() {
+    io.println("No peers") |> Ok
+  })
+  let assert [first, ..] = peers
+  use endpoint <- try(new_endpoint(first) |> replace_error(InvalidEndpoint))
+
+  let piece = torrent.PieceIndex(piece_index)
+
+  use #(socket, peer_peer_id, _extension) <- try(
+    protocol.handshake(endpoint, info_hash, peer_id)
+    |> result.map_error(ProtocolError),
+  )
+  let session = session.new_session(socket, peer_peer_id)
+  download.download_piece(download_path, piece, session)
+  |> map_error(TorrentError)
 }
 
 fn load_peer_id() -> Result(protocol.PeerId, simplifile.FileError) {

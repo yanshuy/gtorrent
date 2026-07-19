@@ -50,10 +50,7 @@ pub fn parse(
   |> Ok
 }
 
-pub fn parse_metadata(
-  metadata: bencode.Bencode,
-  info_hash: BitArray,
-) -> Result(TorrentInfo, bencode.BencodeError) {
+pub fn from_metadata(metadata: bencode.Bencode, info_hash: BitArray) {
   use dict <- try(
     bencode.dict(metadata)
     |> replace_error(bencode.InvalidTorrent("expected meta info to be a dict")),
@@ -134,6 +131,11 @@ fn split_piece_hashes_loop(
 
     _ -> acc
   }
+}
+
+pub type Piece {
+  Piece(PieceInfo)
+  PieceIndex(Int)
 }
 
 pub type PieceInfo {
