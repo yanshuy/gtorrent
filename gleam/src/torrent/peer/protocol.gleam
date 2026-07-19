@@ -1,10 +1,9 @@
 import bencode
+import gleam/bit_array
 import gleam/int
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import mug.{ConnectionOptions}
-
-// import torrent/peer/extension
 
 pub type PeerMessage {
   Choke
@@ -55,10 +54,12 @@ pub fn handshake(endpoint: Endpoint, info_hash: BitArray, peer_id: PeerId) {
   use #(peer_peer_id, reserved) <- try(peer_handshake(socket, info_hash, id))
 
   case reserved {
-    <<_:size(64 - 20), 1:size(1), _:bits>> -> #(socket, peer_peer_id, True)
-    _ -> #(socket, peer_peer_id, False)
+    <<_:size(43), 1:size(1), _:bits>> -> {
+      use _ <- try(extension_handshake(socket))
+      #(socket, peer_peer_id) |> Ok
+    }
+    _ -> #(socket, peer_peer_id) |> Ok
   }
-  |> Ok
 }
 
 fn peer_handshake(
@@ -91,6 +92,29 @@ fn peer_handshake(
     }
     _ -> Error(InvalidMessage)
   }
+}
+
+pub fn extension_handshake(socket: mug.Socket) -> Result(Nil, ProtocolError) {
+  let extensions =
+    [#("ut_metadata", bencode.Int(10))]
+    |> bencode.Dict
+
+  let encoded =
+    [
+      #("m", extensions),
+    ]
+    |> bencode.Dict
+    |> bencode.to_bencode
+    |> bencode.encode
+
+  let message_len = 1 + 1 + bit_array.byte_size(encoded)
+  let extension_message = <<
+    message_len:big-size(32),
+    20:int,
+    0:int,
+    encoded:bits,
+  >>
+  send_message(socket, extension_message)
 }
 
 pub fn log(m: PeerMessage) {

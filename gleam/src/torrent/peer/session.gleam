@@ -4,12 +4,12 @@ import gleam/bool
 import gleam/dict
 import gleam/erlang/process.{type Subject}
 import gleam/int
+import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/pair
 import gleam/result.{map_error, replace_error, try}
 import mug
-import torrent/messages
 import torrent/peer/extension
 import torrent/peer/protocol.{
   BitField, Choke, Extension, Handshake, Have, Interested, MetadataPiece, Piece,
@@ -38,6 +38,8 @@ pub fn new_piece_download(piece: torrent.PieceInfo) {
 }
 
 pub type State {
+  NoMeta
+  Meta(torrent.TorrentInfo)
   NoPiece
   AwaitLease
   Download(piece: PieceDownload)
@@ -48,7 +50,7 @@ pub type PeerSession {
     socket: mug.Socket,
     peer_id: protocol.PeerId,
     bitfield: Option(BitArray),
-    extensions: Option(dict.Dict(String, Int)),
+    extensions: Option(List(#(String, Int))),
     state: State,
     choked: Bool,
     interested: Bool,
@@ -58,52 +60,45 @@ pub type PeerSession {
 pub fn new_session(
   socket: mug.Socket,
   peer_id: protocol.PeerId,
+  state: State,
 ) -> PeerSession {
   PeerSession(
     socket,
     peer_id,
     bitfield: None,
     extensions: None,
-    state: NoPiece,
+    state: state,
     choked: True,
     interested: False,
   )
 }
 
-fn extended_handshake(socket, supported) -> Result(Nil, PeerError) {
-  case supported {
-    True ->
-      extension.send_handshake(socket)
-      |> map_error(ProtocolError)
-    False -> Ok(Nil)
-  }
-}
-
-pub fn start_session(
-  parent_subject: Subject(messages.PeerEvent),
-  endpoint: protocol.Endpoint,
-  info_hash: BitArray,
-  peer_id: protocol.PeerId,
+pub fn run_session(
+  parent_subject: Subject(PeerEvent),
+  piece_subject: Subject(torrent.PieceInfo),
+  session: PeerSession,
 ) {
-  use #(socket, peer_peer_id, extension_supported) <- try(
-    protocol.handshake(endpoint, info_hash, peer_id)
-    |> result.map_error(ProtocolError),
-  )
-  let session = new_session(socket, peer_peer_id)
-
-  use _ <- try(extended_handshake(session.socket, extension_supported))
-
   let message_subject: Subject(ReaderMessage) = process.new_subject()
-  let piece_subject: Subject(torrent.PieceInfo) = process.new_subject()
-
   process.spawn(fn() { peer_reader(message_subject, session.socket) })
 
   let result = run(parent_subject, message_subject, piece_subject, session)
   case result {
     Ok(_) -> Nil
-    Error(err) -> disconnect(parent_subject, peer_peer_id, err)
+    Error(err) -> disconnect(parent_subject, session.peer_id, err)
   }
   Ok(Nil)
+}
+
+fn disconnect(
+  parent_subject: Subject(PeerEvent),
+  peer_id: protocol.PeerId,
+  err: PeerError,
+) {
+  process.send(
+    parent_subject,
+    PeerDisconnected(peer_id, reason: describe_error(err)),
+  )
+  process.kill(process.self())
 }
 
 type ReaderMessage {
@@ -121,9 +116,10 @@ fn peer_reader(message_subject: Subject(ReaderMessage), socket: mug.Socket) {
     Error(err) -> {
       // case err {
       //   ProtocolError(protocol.TCPError(mug.Timeout)) -> {
-      //     todo
+      //     io.println("someewa")
+      //     Nil
       //   }
-      //   _ -> todo
+      //   _ -> Nil
       // }
       process.send(message_subject, ReadError(err))
     }
@@ -136,7 +132,7 @@ type SessionMessage {
 }
 
 fn run(
-  parent_subject: Subject(messages.PeerEvent),
+  parent_subject: Subject(PeerEvent),
   message_subject: Subject(ReaderMessage),
   piece_subject: Subject(torrent.PieceInfo),
   session: PeerSession,
@@ -158,14 +154,6 @@ fn run(
 
         ReaderMessage(Message(message)) -> {
           use session <- try(handle_message(session, message))
-          let _ = case message {
-            BitField(_) ->
-              process.send(
-                parent_subject,
-                messages.Ready(session.peer_id, piece_subject),
-              )
-            _ -> Nil
-          }
           use session <- try(act(parent_subject, session))
           run(parent_subject, message_subject, piece_subject, session)
         }
@@ -177,30 +165,64 @@ fn run(
   }
 }
 
-fn disconnect(
-  parent_subject: Subject(messages.PeerEvent),
-  peer_id: protocol.PeerId,
-  err: PeerError,
-) {
-  process.send(
-    parent_subject,
-    messages.PeerDisconnected(peer_id, reason: describe_error(err)),
-  )
-  process.kill(process.self())
+pub type PeerEvent {
+  Ready(peer: protocol.PeerId, subject: process.Subject(torrent.PieceInfo))
+
+  Metadata(torrent.TorrentInfo)
+
+  LeasePiece(peer_id: protocol.PeerId, bitfield: BitArray)
+
+  ReturnPieceLease(peer_id: protocol.PeerId, piece_index: Int)
+
+  PieceCompleted(peer: protocol.PeerId, index: Int, piece: BitArray)
+
+  PeerDisconnected(peer: protocol.PeerId, reason: String)
 }
 
 // act on session update
 fn act(
-  parent_subject: Subject(messages.PeerEvent),
+  parent_subject: Subject(PeerEvent),
   session: PeerSession,
 ) -> Result(PeerSession, PeerError) {
   case session {
     PeerSession(bitfield: None, ..) -> Ok(session)
 
-    // problem when to send messages.Ready(session.peer_id, piece_subject)
     PeerSession(interested: False, ..) -> send_interested(session)
 
-    PeerSession(choked: True, ..) -> Ok(session)
+    PeerSession(choked: True, ..) -> {
+      case session.state {
+        Download(piece) ->
+          process.send(
+            parent_subject,
+            ReturnPieceLease(session.peer_id, piece.index),
+          )
+        _ -> Nil
+      }
+      Ok(session)
+    }
+
+    PeerSession(state: NoMeta, extensions: None, ..) -> Ok(session)
+
+    PeerSession(state: NoMeta, extensions: Some(ext), ..) -> {
+      use extension_id <- try(
+        list.key_find(ext, "ut_metadata")
+        |> replace_error(PeerError(
+          "ut_metadata extension not supported by peer",
+        )),
+      )
+      use _ <- try(
+        extension.send_metadata_request(session.socket, extension_id)
+        |> map_error(ProtocolError),
+      )
+
+      PeerSession(..session, state: AwaitLease) |> Ok
+    }
+
+    PeerSession(state: Meta(meta), ..) -> {
+      process.send(parent_subject, Metadata(meta))
+      ask_lease(parent_subject, session)
+      PeerSession(..session, state: AwaitLease) |> Ok
+    }
 
     PeerSession(state: NoPiece, ..) -> {
       ask_lease(parent_subject, session)
@@ -214,13 +236,10 @@ fn act(
   }
 }
 
-fn ask_lease(
-  parent_subject: Subject(messages.PeerEvent),
-  session: PeerSession,
-) {
+fn ask_lease(parent_subject: Subject(PeerEvent), session: PeerSession) {
   let assert Some(bitfield) = session.bitfield
     as "idle state before bitfield is set"
-  process.send(parent_subject, messages.LeasePiece(session.peer_id, bitfield))
+  process.send(parent_subject, LeasePiece(session.peer_id, bitfield))
 }
 
 fn notify_or_progress(
@@ -228,14 +247,20 @@ fn notify_or_progress(
   session: PeerSession,
   piece: PieceDownload,
 ) -> Result(PeerSession, PeerError) {
+  echo piece
   case
     list.is_empty(piece.pending_requests),
     dict.is_empty(piece.outstanding_requests)
   {
     True, True -> {
-      handle_piece_complete(parent_subject, session.peer_id, piece)
+      let bin = concat_blocks(piece)
+      process.send(
+        parent_subject,
+        PieceCompleted(peer: session.peer_id, index: piece.index, piece: bin),
+      )
+
       ask_lease(parent_subject, session)
-      PeerSession(..session, state: NoPiece) |> Ok
+      PeerSession(..session, state: AwaitLease) |> Ok
     }
     True, False -> Ok(session)
     False, _ -> {
@@ -245,11 +270,7 @@ fn notify_or_progress(
   }
 }
 
-fn handle_piece_complete(
-  parent_subject: Subject(messages.PeerEvent),
-  peer_id: protocol.PeerId,
-  piece: PieceDownload,
-) {
+fn concat_blocks(piece: PieceDownload) {
   // use blocks <- try(                  // production grade
   //   piece_block_requests(piece.length)
   //   |> list.try_map(fn(req) {
@@ -261,11 +282,7 @@ fn handle_piece_complete(
     dict.to_list(piece.blocks)
     |> list.sort(fn(a, b) { int.compare(a.0, b.0) })
     |> list.map(pair.second)
-  let bin = bit_array.concat(blocks)
-
-  let message =
-    messages.PieceCompleted(peer: peer_id, index: piece.index, piece: bin)
-  process.send(parent_subject, message)
+  bit_array.concat(blocks)
 }
 
 fn handle_message(
@@ -284,7 +301,7 @@ fn handle_message(
       }
     }
 
-    Extension(message) -> handle_extension_message(session, message) |> Ok
+    Extension(message) -> handle_extension_message(session, message)
 
     Piece(_, _, _) -> {
       case session.state {
@@ -302,12 +319,17 @@ fn handle_message(
 
 fn handle_extension_message(session, message: protocol.ExtensionMessage) {
   case message {
-    protocol.Handshake(extensions) -> {
-      let extensions = dict.from_list(extensions)
-      PeerSession(..session, extensions: Some(extensions))
+    protocol.Handshake(extensions) ->
+      PeerSession(..session, extensions: Some(extensions)) |> Ok
+
+    protocol.MetadataPiece(_piece_index, piece) -> {
+      use bencode <- try(bencode.decode(piece) |> map_error(DecodeError))
+      use info <- try(
+        torrent.from_metadata(bencode, <<>>) |> map_error(DecodeError),
+      )
+      PeerSession(..session, state: Meta(info)) |> Ok
     }
-    protocol.MetadataPiece(piece_index, piece) -> session
-    protocol.MetadataRequest(piece_index:) -> todo
+    protocol.MetadataRequest(_piece_index) -> todo
   }
 }
 
@@ -422,8 +444,11 @@ pub fn download_piece(
   use #(session, piece_info) <- try(case piece {
     torrent.Piece(piece) -> #(session, piece) |> Ok
     torrent.PieceIndex(idx) -> {
-      use #(session, extensions) <- try(extension_handshake(session))
-      use #(session, metadata) <- try(extension_metadata(session, extensions))
+      use #(session, extensions) <- try(extension_handshake_back(session))
+      use #(session, metadata) <- try(extension_query_metadata(
+        session,
+        extensions,
+      ))
       use torrent <- try(
         torrent.from_metadata(metadata, <<>>) |> map_error(DecodeError),
       )
@@ -453,12 +478,7 @@ pub fn download_piece(
   #(data, piece_info) |> Ok
 }
 
-pub fn extension_handshake(session: PeerSession) {
-  use _ <- try(
-    extension.send_handshake(session.socket)
-    |> map_error(ProtocolError),
-  )
-
+pub fn extension_handshake_back(session: PeerSession) {
   let is_handshake = fn(message) {
     case message {
       Extension(Handshake(..)) -> True
@@ -471,7 +491,7 @@ pub fn extension_handshake(session: PeerSession) {
   #(session, extensions) |> Ok
 }
 
-pub fn extension_metadata(
+pub fn extension_query_metadata(
   session: PeerSession,
   extensions: List(#(String, Int)),
 ) {

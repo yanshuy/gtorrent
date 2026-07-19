@@ -3,22 +3,25 @@ import gleam/bit_array
 import gleam/bool
 import gleam/crypto
 import gleam/dict
-import gleam/erlang/process
+import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/option.{type Option, None, Some}
 import gleam/result.{try}
 import simplifile
-import torrent/messages.{
-  LeasePiece, PeerDisconnected, PieceCompleted, Ready, ReturnPieceLease,
-}
 import torrent/peer/protocol
-import torrent/peer/session
+import torrent/peer/session.{
+  LeasePiece, Metadata, PeerDisconnected, PieceCompleted, Ready,
+  ReturnPieceLease,
+}
 import torrent/torrent
 
 pub type TorrentState {
-  TorrentState(
+  NoTorrent(
+    download_path: String,
+    peers: dict.Dict(protocol.PeerId, process.Subject(torrent.PieceInfo)),
+  )
+  Download(
     info: torrent.TorrentInfo,
     pending_pieces: List(torrent.PieceInfo),
     leased_pieces: List(torrent.PieceInfo),
@@ -26,36 +29,100 @@ pub type TorrentState {
   )
 }
 
-fn new_download(torrent: torrent.TorrentInfo) {
+fn new_download(
+  torrent: torrent.TorrentInfo,
+  peers: dict.Dict(protocol.PeerId, Subject(torrent.PieceInfo)),
+) {
   let pieces =
     torrent.new_pieces(torrent.length, torrent.piece_length, torrent.pieces)
-  TorrentState(
+  Download(
     info: torrent,
     pending_pieces: pieces,
     leased_pieces: [],
-    peers: dict.new(),
+    peers: peers,
   )
+}
+
+pub type Torrent {
+  Torrent(torrent.TorrentInfo)
+  Magnet(info_hash: BitArray)
 }
 
 pub fn download_torrent(
   download_path: String,
   endpoints: List(protocol.Endpoint),
-  torrent: torrent.TorrentInfo,
+  torrent: Torrent,
   peer_id: protocol.PeerId,
 ) -> Result(Nil, TorrentError) {
-  let main_subject = process.new_subject()
-  let writer = file_io.new_file_writer(download_path, torrent.length)
+  let subject: Subject(session.PeerEvent) = process.new_subject()
 
-  connect_with_peers(main_subject, endpoints, torrent.info_hash, peer_id)
+  case torrent {
+    Torrent(info) -> {
+      let hash = info.info_hash
+      connect_with_peers(subject, endpoints, hash, peer_id, session.NoPiece)
+      let writer = file_io.new_file_writer(download_path, info.length)
+      handle_download(writer, new_download(info, dict.new()), subject)
+    }
+    Magnet(info_hash) -> {
+      connect_with_peers(subject, endpoints, info_hash, peer_id, session.NoMeta)
 
-  handle_download(writer, new_download(torrent), main_subject)
+      let state = NoTorrent(download_path, dict.new())
+      use #(state, info) <- try(handle_metadata(state, subject))
+      let assert NoTorrent(..) = state
+
+      let writer = file_io.new_file_writer(download_path, info.length)
+      let state =
+        new_download(
+          torrent.TorrentInfo(..info, info_hash: info_hash),
+          state.peers,
+        )
+
+      handle_download(writer, state, subject)
+    }
+  }
+}
+
+fn handle_metadata(
+  state: TorrentState,
+  mailbox: process.Subject(session.PeerEvent),
+) {
+  let assert NoTorrent(..) = state
+  case process.receive(mailbox, within: 10_000) {
+    Ok(event) -> {
+      case event {
+        Ready(peer_id, subject) -> {
+          let peers = dict.insert(state.peers, peer_id, subject)
+          let state = NoTorrent(..state, peers: peers)
+          handle_metadata(state, mailbox)
+        }
+
+        Metadata(info) -> #(state, info) |> Ok
+
+        PeerDisconnected(peer_id, reason) -> {
+          let id = {
+            let protocol.PeerId(id) = peer_id
+            id |> bit_array.base16_encode
+          }
+          io.print_error(
+            "Stopping peer session with: " <> id <> "\nReason: " <> reason,
+          )
+          let peers = dict.delete(state.peers, peer_id)
+          let new_state = NoTorrent(..state, peers: peers)
+          handle_metadata(new_state, mailbox)
+        }
+        _ -> handle_metadata(state, mailbox)
+      }
+    }
+    Error(_) -> Error(NoPeerResponding)
+  }
 }
 
 fn handle_download(
   writer: file_io.Writer,
   state: TorrentState,
-  mailbox: process.Subject(messages.PeerEvent),
+  mailbox: process.Subject(session.PeerEvent),
 ) -> Result(Nil, TorrentError) {
+  let assert Download(..) = state
   use <- bool.guard(
     state.pending_pieces |> list.is_empty
       && state.leased_pieces |> list.is_empty,
@@ -66,7 +133,7 @@ fn handle_download(
       case event {
         Ready(peer_id, subject) -> {
           let peers = dict.insert(state.peers, peer_id, subject)
-          let state = TorrentState(..state, peers: peers)
+          let state = Download(..state, peers: peers)
           handle_download(writer, state, mailbox)
         }
 
@@ -80,10 +147,10 @@ fn handle_download(
               let pendings =
                 state.pending_pieces
                 |> list.filter(fn(pending) { pending.index != piece.index })
-              let state = TorrentState(..state, pending_pieces: pendings)
+              let state = Download(..state, pending_pieces: pendings)
 
               let leased = [piece, ..state.leased_pieces]
-              let state = TorrentState(..state, leased_pieces: leased)
+              let state = Download(..state, leased_pieces: leased)
 
               handle_download(writer, state, mailbox)
             }
@@ -113,16 +180,15 @@ fn handle_download(
                 }
               })
 
-              let new_state = TorrentState(..state, leased_pieces: new_leased)
+              let new_state = Download(..state, leased_pieces: new_leased)
               handle_download(writer, new_state, mailbox)
             }
             False -> {
               let new_state =
-                TorrentState(
-                  ..state,
-                  leased_pieces: new_leased,
-                  pending_pieces: [leased, ..state.pending_pieces],
-                )
+                Download(..state, leased_pieces: new_leased, pending_pieces: [
+                  leased,
+                  ..state.pending_pieces
+                ])
               handle_download(writer, new_state, mailbox)
             }
           }
@@ -139,7 +205,7 @@ fn handle_download(
             |> list.filter(fn(piece) { piece.index != piece_index })
 
           let new_state =
-            TorrentState(
+            Download(
               ..state,
               pending_pieces: [leased, ..state.pending_pieces],
               leased_pieces: new_leased,
@@ -156,9 +222,11 @@ fn handle_download(
             "Stopping peer session with: " <> id <> "\nReason: " <> reason,
           )
           let peers = dict.delete(state.peers, peer_id)
-          let new_state = TorrentState(..state, peers: peers)
+          let new_state = Download(..state, peers: peers)
           handle_download(writer, new_state, mailbox)
         }
+
+        Metadata(torrent) -> todo
       }
     }
     Error(_) -> Error(NoPeerResponding)
@@ -166,33 +234,43 @@ fn handle_download(
 }
 
 pub fn connect_with_peers(
-  main_subject: process.Subject(messages.PeerEvent),
+  main_subject: process.Subject(session.PeerEvent),
   endpoints: List(protocol.Endpoint),
   info_hash: BitArray,
   peer_id: protocol.PeerId,
+  start_state: session.State,
 ) {
-  let spawn_worker = fn(endpoint: protocol.Endpoint) {
-    process.spawn(fn() {
-      let session =
-        session.start_session(main_subject, endpoint, info_hash, peer_id)
-        |> result.map_error(PeerError)
+  let worker_func = fn(endpoint: protocol.Endpoint) {
+    let result = {
+      use #(socket, peer_peer_id) <- try(
+        protocol.handshake(endpoint, info_hash, peer_id)
+        |> result.map_error(ProtocolError),
+      )
+      let session = session.new_session(socket, peer_peer_id, start_state)
 
-      case session {
-        Ok(_) -> Nil
-        Error(err) ->
-          io.println(endpoint.ip4 <> "is malicious" <> describe_error(err))
-      }
-    })
+      let piece_subject: Subject(torrent.PieceInfo) = process.new_subject()
+      process.send(main_subject, Ready(session.peer_id, piece_subject))
+
+      session.run_session(main_subject, piece_subject, session)
+      |> result.map_error(PeerError)
+    }
+    case result {
+      Ok(_) -> Nil
+      Error(err) ->
+        io.println(endpoint.ip4 <> "is malicious" <> describe_error(err))
+    }
   }
+
   endpoints
   |> list.take(6)
-  |> list.each(spawn_worker)
+  |> list.each(fn(endpoint) { process.spawn(fn() { worker_func(endpoint) }) })
 }
 
 fn lease_piece(
   state: TorrentState,
   bitfield: BitArray,
 ) -> Result(torrent.PieceInfo, Nil) {
+  let assert Download(..) = state
   state.pending_pieces
   |> list.find(fn(piece) { is_bit_set(bitfield, piece.index) })
 }
