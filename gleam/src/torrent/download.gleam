@@ -226,7 +226,7 @@ fn handle_download(
           handle_download(writer, new_state, mailbox)
         }
 
-        Metadata(torrent) -> todo
+        Metadata(_) -> handle_download(writer, state, mailbox)
       }
     }
     Error(_) -> Error(NoPeerResponding)
