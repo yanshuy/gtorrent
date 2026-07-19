@@ -9,10 +9,8 @@ import gleam/json
 import gleam/list
 import gleam/result.{map_error, replace_error, try}
 import gleam/string
-import mug
 import simplifile
 import torrent/download
-import torrent/peer/extension
 import torrent/peer/protocol
 import torrent/peer/session
 import torrent/torrent
